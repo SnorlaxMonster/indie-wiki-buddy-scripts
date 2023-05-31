@@ -48,6 +48,18 @@ print("==============================")
 print(json.dumps(data, indent=2))
 print("==============================")
 
+# Add site to data file:
+data_filename = 'data/sites' + lang.upper() + '.json'
+with open(data_filename, 'r') as file:
+  wiki_data = json.load(file)
+wiki_data.append(data)
+
+# Sort JSON:
+wiki_data.sort(key=lambda obj: obj['id'])
+
+# Write back to data file:
+with open(data_filename, 'w', encoding='utf8') as file:
+  json.dump(wiki_data, file, indent=2, ensure_ascii=False)
 
 # Pull favicon from destination wiki:
 page = urlopen(Request(url="https://" + destination_link, headers={'User-Agent': 'Mozilla/5.0'}))
