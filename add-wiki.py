@@ -12,8 +12,19 @@ import json
 import re
 import requests
 from urllib.request import Request, urlopen
+from urllib.parse import urlparse
 from PIL import Image
 from bs4 import BeautifulSoup
+
+def get_article_path(url):
+  url_path = urlparse(url).path
+  paths = ["/wiki/", "/w/", "/"]
+
+  for path in paths:
+    if url_path.startswith(path):
+      return path
+
+  return "/"
 
 # Get data from user input:
 lang = input("Enter language as two letter code (leave blank for 'en'): ") or "en"
@@ -21,10 +32,13 @@ id = input("Enter entry ID (series name, one word, no dashes e.g. animalcrossing
 id = id.lower()
 origin_name = input("Enter origin wiki name (leave blank for '<id.capitalize()> Fandom Wiki'): " ) or id.capitalize() + " Fandom Wiki"
 origin_link = input("Enter origin wiki link (leave blank for '<id>.fandom.com'): ") or id + ".fandom.com"
-origin_content_path = input("Enter origin content path (leave blank for '/wiki/'): ") or "/wiki/"
+origin_content_path = input("Enter origin article path (leave blank for '/wiki/'): ") or "/wiki/"
 destination_name = input("Enter destination wiki name: ")
 destination_link = input("Enter destination wiki link: ")
-destination_content_path = input("Enter destination wiki content path: ")
+destination_response = requests.head("https://" + destination_link, allow_redirects=True)
+destination_url = destination_response.url
+article_path = get_article_path(destination_url)
+destination_content_path = input("Detected article path " + article_path + ", you may keep this or overwrite: ") or article_path
 destination_platform = input("Enter destination wiki platform (leave blank for 'mediawiki'): ") or "mediawiki"
 
 # Output JSON:
@@ -52,12 +66,11 @@ print("==============================")
 data_filename = 'data/sites' + lang.upper() + '.json'
 with open(data_filename, 'r') as file:
   wiki_data = json.load(file)
-wiki_data.append(data)
 
-# Sort JSON:
+wiki_data.append(data)
 wiki_data.sort(key=lambda obj: obj['id'])
 
-# Write back to data file:
+# Write the updated data back to the JSON file
 with open(data_filename, 'w', encoding='utf8') as file:
   json.dump(wiki_data, file, indent=2, ensure_ascii=False)
 
@@ -65,6 +78,8 @@ with open(data_filename, 'w', encoding='utf8') as file:
 page = urlopen(Request(url="https://" + destination_link, headers={'User-Agent': 'Mozilla/5.0'}))
 soup = BeautifulSoup(page, "html.parser")
 icon_link = soup.find("link", rel="shortcut icon")
+if(icon_link is None):
+  icon_link = soup.find("link", rel="icon")
 icon = urlopen(Request(url=requests.compat.urljoin("https://" + destination_link + "/favicon.ico", icon_link['href']), headers={'User-Agent': 'Mozilla/5.0'}))
 icon_filename =  os.path.join("favicons\\" + lang + "\\" + re.sub('[^A-Za-z0-9]+', '', destination_name).lower() + icon_link['href'][-4:])
 with open(icon_filename, "wb+") as f:
