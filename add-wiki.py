@@ -87,5 +87,5 @@ with open(icon_filename, "wb+") as f:
 
 # Convert favicon to PNG, resize to 16px, save, and delete the original file:
 time.sleep(1)
-Image.open(icon_filename).save(icon_filename[0:icon_filename.find('.')] + ".png", sizes=(16, 16))
+Image.open(icon_filename).resize((16, 16)).save(icon_filename[0:icon_filename.find('.')] + ".png")
 os.remove(icon_filename)
