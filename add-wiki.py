@@ -18,7 +18,7 @@ from bs4 import BeautifulSoup
 
 def get_article_path(url):
   url_path = urlparse(url).path
-  paths = ["/wiki/", "/w/", "/"]
+  paths = ["index.php", "/wiki/", "/w/", "/"]
 
   for path in paths:
     if url_path.startswith(path):
