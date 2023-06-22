@@ -73,7 +73,7 @@ with open(data_filename, 'r') as file:
   wiki_data = json.load(file)
 
 wiki_data.append(data)
-wiki_data.sort(key=lambda obj: obj['id'])
+wiki_data.sort(key=lambda obj: obj['origins_label'].lower())
 
 # Write the updated data back to the JSON file
 with open(data_filename, 'w', encoding='utf8') as file:
