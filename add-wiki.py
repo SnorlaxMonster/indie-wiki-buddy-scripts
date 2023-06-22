@@ -18,7 +18,7 @@ from bs4 import BeautifulSoup
 
 def get_article_path(url):
   url_path = urlparse(url).path
-  paths = ["index.php", "/wiki/", "/w/", "/"]
+  paths = ["/index.php/", "/wiki/", "/w/", "/"]
 
   for path in paths:
     if url_path.startswith(path):
@@ -35,10 +35,9 @@ origin_link = input("📥 Enter origin wiki link (leave blank for '<id>.fandom.c
 origin_content_path = input("📥 Enter origin article path (leave blank for '/wiki/'): ") or "/wiki/"
 destination_name = input("📥 Enter destination wiki name: ")
 destination_link = input("📥 Enter destination wiki link: ")
+destination_link = re.sub(r'^https?:\/\/', '', destination_link)
 print("🕑 Getting wiki's article path...")
-if(not destination_link.startswith('http')):
-  destination_link = "https://" + destination_link
-destination_response = requests.head(destination_link, allow_redirects=True)
+destination_response = requests.head("https://" + destination_link, allow_redirects=True)
 destination_url = destination_response.url
 article_path = get_article_path(destination_url)
 destination_content_path = input("📥 Detected article path " + article_path + ", you may keep this or overwrite: ") or article_path
@@ -59,7 +58,7 @@ data = {
   "destination_base_url": destination_link,
   "destination_content_path": destination_content_path,
   "destination_platform": destination_platform,
-  "destination_icon": destination_name.lower() + ".png"
+  "destination_icon": re.sub('[^A-Za-z0-9]+', '', destination_name).lower() + ".png"
 }
 print("🗒️ Generated the following data:")
 print("")
@@ -84,15 +83,13 @@ print("💾 Data saved and sorted in sites" + lang.upper() + ".json!")
 print("🕑 Now grabbing wiki's favicon...")
 
 # Pull favicon from destination wiki:
-if(not destination_link.startswith('http')):
-  destination_link = "https://" + destination_link
-page = urlopen(Request(url=destination_link, headers={'User-Agent': 'Mozilla/5.0'}))
+page = urlopen(Request(url="https://" + destination_link, headers={'User-Agent': 'Mozilla/5.0'}))
 soup = BeautifulSoup(page, "html.parser")
 icon_link = soup.find("link", rel="shortcut icon")
 if(icon_link is None):
   icon_link = soup.find("link", rel="icon")
-icon = urlopen(Request(url=requests.compat.urljoin(destination_link + "/favicon.ico", icon_link['href']), headers={'User-Agent': 'Mozilla/5.0'}))
-icon_filename =  os.path.join("favicons\\" + lang + "\\" + re.sub('[^A-Za-z0-9]+', '', destination_name).lower() + icon_link['href'][-4:])
+icon = urlopen(Request(url=requests.compat.urljoin("https://" + destination_link + "/favicon.ico", icon_link['href']), headers={'User-Agent': 'Mozilla/5.0'}))
+icon_filename =  os.path.join("favicons/" + lang + "/" + re.sub('[^A-Za-z0-9]+', '', destination_name).lower() + icon_link['href'][-4:])
 with open(icon_filename, "wb+") as f:
   f.write(icon.read())
 
@@ -102,4 +99,3 @@ Image.open(icon_filename).resize((16, 16)).save(icon_filename[0:icon_filename.fi
 os.remove(icon_filename)
 print("🖼️ Favicon saved!")
 print("✅ All done!")
-
