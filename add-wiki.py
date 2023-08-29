@@ -88,14 +88,15 @@ soup = BeautifulSoup(page, "html.parser")
 icon_link = soup.find("link", rel="shortcut icon")
 if(icon_link is None):
   icon_link = soup.find("link", rel="icon")
-icon = urlopen(Request(url=requests.compat.urljoin("https://" + destination_link + "/favicon.ico", icon_link['href']), headers={'User-Agent': 'Mozilla/5.0'}))
-icon_filename =  os.path.join("favicons/" + lang + "/" + re.sub('[^A-Za-z0-9]+', '', destination_name).lower() + icon_link['href'][-4:])
-with open(icon_filename, "wb+") as f:
+icon = urlopen(Request(url=requests.compat.urljoin("https://" + destination_link, icon_link['href']), headers={'User-Agent': 'Mozilla/5.0'}))
+temp_icon_filename = os.path.join("favicons/" + lang + "/temp_icon")
+icon_filename = os.path.join("favicons/" + lang + "/" + re.sub('[^A-Za-z0-9]+', '', destination_name).lower())
+with open(temp_icon_filename, "wb+") as f:
   f.write(icon.read())
 
 # Convert favicon to PNG, resize to 16px, save, and delete the original file:
 time.sleep(1)
-Image.open(icon_filename).resize((16, 16)).save(icon_filename[0:icon_filename.find('.')] + ".png")
-os.remove(icon_filename)
+Image.open(temp_icon_filename).resize((16, 16)).save(icon_filename + ".png")
+os.remove(temp_icon_filename)
 print("🖼️ Favicon saved!")
 print("✅ All done!")
