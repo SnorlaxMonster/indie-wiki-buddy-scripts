@@ -16,31 +16,33 @@ from urllib.parse import urlparse
 from PIL import Image
 from bs4 import BeautifulSoup
 
-def get_article_path(url):
-  url_path = urlparse(url).path
-  paths = ["/index.php/", "/wiki/", "/w/", "/"]
-
-  for path in paths:
-    if url_path.startswith(path):
-      return path
-
-  return "/"
-
 # Get data from user input:
 lang = input("📥 Enter language as two letter code (leave blank for 'en'): ") or "en"
 id = input("📥 Enter entry ID (series name, one word, no dashes e.g. animalcrossing): ")
 id = id.lower()
 origin_name = input("📥 Enter origin wiki name (leave blank for '<id.capitalize()> Fandom Wiki'): " ) or id.capitalize() + " Fandom Wiki"
 origin_link = input("📥 Enter origin wiki link (leave blank for '<id>.fandom.com'): ") or id + ".fandom.com"
-origin_content_path = input("📥 Enter origin article path (leave blank for '/wiki/'): ") or "/wiki/"
+
+# Pull main page title:
+print("👷 Getting origin path info...")
+origin_request = requests.get(url='https://' + origin_link, headers={'User-Agent': 'Mozilla/5.0'})
+origin_final_link = origin_request.url
+origin_main_page = urlparse(origin_final_link).path.split('/')[-1]
+print("ℹ️ Found origin main page: " + origin_main_page)
+origin_content_path = urlparse(origin_final_link).path.replace(origin_main_page, '')
+print("ℹ️ Found origin content path: " + origin_content_path)
+
 destination_name = input("📥 Enter destination wiki name: ")
 destination_link = input("📥 Enter destination wiki link: ")
-destination_link = re.sub(r'^https?:\/\/', '', destination_link)
-print("🕑 Getting wiki's article path...")
-destination_response = requests.head("https://" + destination_link, allow_redirects=True)
-destination_url = destination_response.url
-article_path = get_article_path(destination_url)
-destination_content_path = input("📥 Detected article path " + article_path + ", you may keep this or overwrite: ") or article_path
+
+# Pull main page title:
+print("👷 Getting destination main page...")
+destination_request = requests.get(url='https://' + destination_link, headers={'User-Agent': 'Mozilla/5.0'})
+destination_final_link = destination_request.url
+destination_main_page = urlparse(destination_final_link).path.split('/')[-1]
+print("ℹ️ Found destination main page: " + destination_main_page)
+
+destination_search_path = input("📥 Enter destination wiki search path: ")
 destination_platform = input("📥 Enter destination wiki platform (leave blank for 'mediawiki'): ") or "mediawiki"
 
 # Output JSON:
@@ -51,15 +53,21 @@ data = {
     {
       "origin": origin_name,
       "origin_base_url": origin_link,
-      "origin_content_path": origin_content_path
+      "origin_content_path": origin_content_path,
+      "origin_main_page": origin_main_page
     }
   ],
   "destination": destination_name,
   "destination_base_url": destination_link,
-  "destination_content_path": destination_content_path,
   "destination_platform": destination_platform,
-  "destination_icon": re.sub('[^A-Za-z0-9]+', '', destination_name).lower() + ".png"
+  "destination_icon": re.sub('[^A-Za-z0-9]+', '', destination_name).lower().replace('wikigg', 'wiki') + ".png",
+  "destination_main_page": destination_main_page,
+  "destination_search_path": destination_search_path
 }
+
+if ('wiki.gg' in destination_name):
+  data['tags'] = ['wiki.gg']
+
 print("🗒️ Generated the following data:")
 print("")
 print(json.dumps(data, indent=2))
@@ -73,7 +81,7 @@ with open(data_filename, 'r') as file:
   wiki_data = json.load(file)
 
 wiki_data.append(data)
-wiki_data.sort(key=lambda obj: obj['origins_label'].lower())
+wiki_data.sort(key=lambda obj: obj['id'])
 
 # Write the updated data back to the JSON file
 with open(data_filename, 'w', encoding='utf8') as file:
@@ -88,9 +96,11 @@ soup = BeautifulSoup(page, "html.parser")
 icon_link = soup.find("link", rel="shortcut icon")
 if(icon_link is None):
   icon_link = soup.find("link", rel="icon")
+print(icon_link)
+print(requests.compat.urljoin("https://" + destination_link, icon_link['href']))
 icon = urlopen(Request(url=requests.compat.urljoin("https://" + destination_link, icon_link['href']), headers={'User-Agent': 'Mozilla/5.0'}))
 temp_icon_filename = os.path.join("favicons/" + lang + "/temp_icon")
-icon_filename = os.path.join("favicons/" + lang + "/" + re.sub('[^A-Za-z0-9]+', '', destination_name).lower())
+icon_filename = os.path.join("favicons/" + lang + "/" + re.sub('[^A-Za-z0-9]+', '', destination_name).lower().replace('wikigg', 'wiki'))
 with open(temp_icon_filename, "wb+") as f:
   f.write(icon.read())
 
