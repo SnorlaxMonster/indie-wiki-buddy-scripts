@@ -93,6 +93,17 @@ def normalize_wikia_url(original_url: str) -> str:
     return urlunparse(parsed_url)
 
 
+def extract_hostname(url: str) -> str:
+    """
+    Extract the hostname (full domain name) of the specified URL.
+
+    :param url: URL
+    :return: Domain name
+    """
+    parsed_url = urlparse(url)
+    return parsed_url.hostname
+
+
 def request_with_http_fallback(raw_url: str, **kwargs) -> requests.Response:
     """
     Attempts to resolve the URL, then falls back to HTTP if an SSLError occurred.

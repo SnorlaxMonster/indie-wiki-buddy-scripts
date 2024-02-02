@@ -13,18 +13,7 @@ from typing import Optional, Iterable
 from PIL import Image
 
 from scrapewiki import normalize_url_protocol, get_mediawiki_api_url, get_favicon_url, determine_wiki_software, \
-    request_with_http_fallback, query_mediawiki_api, MediaWikiAPIError
-
-
-def extract_hostname(url: str) -> str:
-    """
-    Extract the hostname (full domain name) of the specified URL.
-
-    :param url: URL
-    :return: Domain name
-    """
-    parsed_url = urlparse(url)
-    return parsed_url.hostname
+    request_with_http_fallback, query_mediawiki_api, extract_hostname, MediaWikiAPIError
 
 
 def extract_site_metadata_from_siteinfo(siteinfo: dict) -> dict:
@@ -467,7 +456,7 @@ def confirm_yes_no(caption: str) -> bool:
         return False
 
 
-def get_wiki_metadata_cli(site_class, key_properties, headers: Optional[dict] = None):
+def get_wiki_metadata_cli(site_class: str, key_properties: Iterable, headers: Optional[dict] = None):
     """
     CLI for preparing the data for a new origin or destination site.
     Retrieves the base_url, as well as any properties specified in key_properties.
