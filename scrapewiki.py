@@ -132,23 +132,25 @@ def request_with_http_fallback(raw_url: str, **kwargs) -> requests.Response:
 def is_mediawiki(parsed_html: lxml.html.etree) -> bool:
     """
     Checks if the page is a MediaWiki page.
-    MediaWiki pages can be identified by containing "mediawiki" as a class on the <body> element.
 
     :param parsed_html: LXML etree representation of the page's HTML
     :return: Whether the page is a page from a MediaWiki site
     """
+    # Most MediaWiki wikis include 'mediawiki' as a class on the <body> element
     body_elem = parsed_html.find('body')
-    if body_elem is None:
-        return False
+    if body_elem is not None:
+        body_class = body_elem.get('class')
+        if body_class is not None:
+            if 'mediawiki' in body_class.split():
+                return True
 
-    body_class = body_elem.get('class')
-    if body_class is None:
-        return False
-
-    if 'mediawiki' in body_class.split():
+    # For wikis that lack this (e.g. Neoseeker's AdBird skin), they can still be identified by the content element
+    content_elem = parsed_html.find('//div[@id="mw-content-text"]/div[@class="mw-parser-output"]')
+    if content_elem is not None:
         return True
-    else:
-        return False
+
+    # Otherwise, assume the site is not MediaWiki
+    return False
 
 
 def determine_wiki_software(response: Optional[requests.Response]) -> Optional[str]:
@@ -245,15 +247,21 @@ def get_mediawiki_api_url(wiki_page: str | requests.Response, headers: Optional[
 
         return normalize_relative_url(api_url, response.url)
 
+    # If EditURI is missing, try to find the searchform element and determine the API URL from that
+    searchform_node = parsed_html.find('//form[@id="searchform"]')
+    if searchform_node is not None:
+        print(f"ℹ Retrieved API URL for {response.url} via searchform node")
+        api_url = searchform_node.get("action").replace('index.php', 'api.php')
+
+        return normalize_relative_url(api_url, response.url)
+
     # If EditURI is missing, try to find the permalink URL and determine the API URL from that
     permalink_node = parsed_html.find('//li[@id="t-permalink"]/a')
     if permalink_node is not None:
         print(f"ℹ Retrieved API URL for {response.url} via permalink node")
-        permalink_url = permalink_node.get("href")
-        parsed_permalink_url = urlparse(permalink_url)
-        parsed_api_url = parsed_permalink_url._replace(path=parsed_permalink_url.path.replace('index.php', 'api.php'))
+        api_url = permalink_node.get("href").replace('index.php', 'api.php')
 
-        return normalize_relative_url(parsed_api_url, response.url)
+        return normalize_relative_url(api_url, response.url)
 
     # If the page is a BreezeWiki page, identify the original Fandom URL and retrieve the API URL from Fandom
     if ".fandom.com" not in response.url:

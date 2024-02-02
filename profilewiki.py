@@ -125,16 +125,19 @@ def main():
     while wiki_url.strip() == "":
         wiki_url = input(f"📥 Enter wiki URL: ")
 
+    if wiki_url.endswith("/api.php"):
+        api_url = wiki_url
     # Get API URL
-    print(f"🕑 Retrieving wiki's API URL")
-    try:
-        api_url = get_mediawiki_api_url(wiki_url, headers=headers)
-    except (HTTPError, ConnectionError, SSLError) as e:
-        print(e)
-        return
-    if api_url is None:
-        print(f"🗙 Unable to retrieve wiki's API URL")
-        return
+    else:
+        print(f"🕑 Retrieving wiki's API URL")
+        try:
+            api_url = get_mediawiki_api_url(wiki_url, headers=headers)
+        except (HTTPError, ConnectionError, SSLError) as e:
+            print(e)
+            return
+        if api_url is None:
+            print(f"🗙 Unable to retrieve wiki's API URL")
+            return
 
     # Retrieve wiki metadata
     print(f"🕑 Submitting queries to {api_url}")
