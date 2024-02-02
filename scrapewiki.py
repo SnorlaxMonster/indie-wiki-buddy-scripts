@@ -177,6 +177,32 @@ def determine_wiki_software(response: Optional[requests.Response]) -> Optional[s
         return None  # unable to determine the wiki's software
 
 
+def get_fandom_url_from_breezewiki(response: Optional[requests.Response]) -> Optional[str]:
+    """
+    If the input page is a BreezeWiki site, returns the original Fandom URL.
+    Otherwise returns None.
+
+    :param response: HTTP/HTTPS response for a wiki page request
+    :return:
+    """
+    # Parse the HTML
+    parsed_html = lxml.html.parse(BytesIO(response.content))
+
+    # Assume all BreezeWiki instances include a link to the sourcecode in the footer
+    bw_footer_signature_xpath = '//footer[@class="custom-footer"]//a[@href="https://gitdab.com/cadence/breezewiki"]'
+    if parsed_html.find(bw_footer_signature_xpath) is None:
+        return None
+
+    # Retrieve the Fandom URL from the page footer
+    # NOTE: This is very fragile, and could break on alternate BreezeWiki hosts or in future BreezeWiki updates
+    fandom_link_node = parsed_html.find('//footer[@class="custom-footer"]/div/div[2]/p/a[1]')
+    fandom_url = fandom_link_node.get('href')
+    if ".fandom.com" in fandom_url and fandom_url != "https://www.fandom.com/licensing":
+        return fandom_url
+    else:
+        return None
+
+
 def get_favicon_url(response: Optional[requests.Response]) -> Optional[str]:
     if not response:
         return None
@@ -215,7 +241,6 @@ def get_mediawiki_api_url(wiki_page: str | requests.Response, headers: Optional[
 
     else:
         response = wiki_page
-        assert headers is None
 
     # Parse the HTML
     parsed_html = lxml.html.parse(BytesIO(response.content))
@@ -241,6 +266,13 @@ def get_mediawiki_api_url(wiki_page: str | requests.Response, headers: Optional[
         parsed_api_url = parsed_permalink_url._replace(path=parsed_permalink_url.path.replace('index.php', 'api.php'))
 
         return normalize_relative_url(parsed_api_url, response.url)
+
+    # If the page is a BreezeWiki page, identify the original Fandom URL and retrieve the API URL from Fandom
+    if ".fandom.com" not in response.url:
+        fandom_url = get_fandom_url_from_breezewiki(response)
+        if fandom_url is not None:
+            print(f"ℹ {response.url} is a BreezeWiki site. Retrieving API URL from Fandom.")
+            return get_mediawiki_api_url(fandom_url, headers=headers)
 
     # Otherwise, the API URL retrieval has failed
     return None
