@@ -12,6 +12,8 @@ from io import BytesIO
 from typing import Optional
 from PIL import Image
 
+NO_VALUES = {"", "n", "no"}
+YES_VALUES = {"y", "yes"}
 
 def extract_hostname(url: str) -> str:
     """
@@ -712,6 +714,22 @@ def add_redirect_entry_from_url(origin_wiki_url: str, destination_wiki_url: str,
     return entry_id
 
 
+def confirm_property_value_cli(prop: str, expected_type: str, current_value, new_value) -> bool:
+    user_input = None
+
+    # Loop until the user confirms or rejects the change
+    while user_input not in (YES_VALUES | NO_VALUES):
+        user_input = input(f'⚠ {new_value} does not look like a {expected_type}. Is this value correct? (Y/N): ')
+        user_input = user_input.lower().strip()
+
+    # If the user rejects the change, cancel the edit
+    if user_input in NO_VALUES:
+        print(f'ℹ {prop} not changed from "{current_value}"): ')
+        return False
+    else:
+        return True
+
+
 def get_wiki_metadata_cli(site_class, key_properties, headers: Optional[dict] = None):
     """
     CLI for preparing the data for a new origin or destination site.
@@ -724,7 +742,9 @@ def get_wiki_metadata_cli(site_class, key_properties, headers: Optional[dict] = 
     """
 
     # Resolve input URL
-    wiki_url = input(f"📥 Enter {site_class} wiki URL: ")
+    wiki_url = ""
+    while wiki_url.strip() == "":
+        wiki_url = input(f"📥 Enter {site_class} wiki URL: ")
     response = request_with_error_handling(wiki_url, headers=headers)
 
     wiki_data = {}
@@ -774,18 +794,15 @@ def get_wiki_metadata_cli(site_class, key_properties, headers: Optional[dict] = 
         print(f"ℹ Detected as a {wikifarm} wiki")
 
     # Check if the user wants to edit the retrieved metadata
-    no_values = {"", "n", "no"}
-    yes_values = {"y", "yes"}
-
     if len(auto_properties) > 0:
         user_input = None
-        while user_input not in (yes_values | no_values):
+        while user_input not in (YES_VALUES | NO_VALUES):
             user_input = input(f"❔ Edit auto-generated metadata (Y/N)?: ")
             user_input = user_input.lower().strip()
 
-            if user_input in no_values:
+            if user_input in NO_VALUES:
                 return wiki_data
-            elif user_input in yes_values:
+            elif user_input in YES_VALUES:
                 break
             print("⚠ Unrecognized input. Please enter Y or N, or leave blank to skip.")
 
@@ -796,6 +813,15 @@ def get_wiki_metadata_cli(site_class, key_properties, headers: Optional[dict] = 
             new_value = input(f'📥 Enter {site_class} wiki {prop} (current value: "{current_value}"): ')
             new_value = new_value.strip()
             if new_value != "":
+                # Basic sanity checks for common input errors
+                if "url" in prop and (" " in new_value or "." not in new_value):
+                    if not confirm_property_value_cli(prop, "URL", current_value, new_value):
+                        continue
+                elif "path" in prop and "/" not in new_value:
+                    if not confirm_property_value_cli(prop, "path", current_value, new_value):
+                        continue
+
+                # Update the property
                 wiki_data[prop] = new_value
                 print(f'ℹ Updated {prop} to "{new_value}"')
 
