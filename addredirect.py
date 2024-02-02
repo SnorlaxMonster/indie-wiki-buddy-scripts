@@ -5,17 +5,15 @@ import re
 import json
 import os
 from urllib.parse import urlparse
-import requests
 import unicodedata
+import requests
+from requests.exceptions import HTTPError, SSLError
 from io import BytesIO
 from typing import Optional, Iterable
 from PIL import Image
 
-from scrapewiki import normalize_url_protocol, normalize_wikia_url, get_mediawiki_api_url, get_favicon_url, \
-    determine_wiki_software, request_with_error_handling, request_siteinfo
-
-NO_VALUES = {"", "n", "no"}
-YES_VALUES = {"y", "yes"}
+from scrapewiki import normalize_url_protocol, get_mediawiki_api_url, get_favicon_url, determine_wiki_software, \
+    request_with_http_fallback, query_mediawiki_api, MediaWikiAPIError
 
 
 def extract_hostname(url: str) -> str:
@@ -73,7 +71,7 @@ def extract_site_metadata_from_siteinfo(siteinfo: dict) -> dict:
         "search path": search_path,
         "icon path": icon_path,
         "wikifarm": wikifarm,
-        "platform": "mediawiki",  # This function requires a MediaWiki API result as input
+        "platform": "mediawiki",  # This data necessarily comes from the MediaWiki API
     }
     return site_properties
 
@@ -171,7 +169,7 @@ def generate_redirect_entry(origin_site_metadata: dict, destination_site_metadat
     # Generate an entry id if it was not provided
     if entry_id is None:
         language = destination_site_metadata["language"]
-        entry_id = generate_entry_id(language, origin_entry["base_url"])
+        entry_id = generate_entry_id(language, origin_entry["origin_base_url"])
 
     # Generate redirect entry
     entry = {
@@ -230,13 +228,11 @@ def download_wiki_icon(icon_url: str, wiki_name: str, language_code: str,
     # Download icon file
     try:
         icon_file_response = requests.get(normalize_url_protocol(icon_url), headers=headers)
-    except requests.exceptions.ConnectionError:
+    except ConnectionError:
         icon_file_response = None
 
     if not icon_file_response:
         return None
-
-    image_file = Image.open(BytesIO(icon_file_response.content))
 
     # Determine filepath
     icon_filename = generate_icon_filename(wiki_name)
@@ -247,6 +243,7 @@ def download_wiki_icon(icon_url: str, wiki_name: str, language_code: str,
     icon_filepath = os.path.join(icon_folderpath, icon_filename)
 
     # Write to file
+    image_file = Image.open(BytesIO(icon_file_response.content))
     image_file = image_file.resize((16, 16))
     image_file.save(icon_filepath)  # PIL ensures that conversion from ICO to PNG is safe
 
@@ -306,12 +303,12 @@ def get_sites_json_filepath(language_code, iwb_filepath: str | os.PathLike = "."
 
 
 def read_sites_json(sites_json_filepath: str | os.PathLike) -> list[dict]:
-    try:
-        with open(sites_json_filepath, "r", encoding='utf-8') as sites_json_file:
-            return json.load(sites_json_file)
     # If there is not currently a sites JSON for this language, start from an empty list
-    except OSError:
+    if not os.path.isfile(sites_json_filepath):
         return []
+
+    with open(sites_json_filepath, "r", encoding='utf-8') as sites_json_file:
+        return json.load(sites_json_file)
 
 
 def add_redirect_entry(new_entry: dict, language_code: str, icon_url: Optional[str] = None,
@@ -399,18 +396,24 @@ def add_redirect_entry_from_url(origin_wiki_url: str, destination_wiki_url: str,
     """
     # Check the IWB filepath is correct
     if not os.path.isdir(os.path.join(iwb_filepath, "data")):
-        raise Exception('⚠ Cannot find the "data" folder. Ensure that you specified the correct "iwb_filepath".')
+        raise OSError('Cannot find the "data" folder. Ensure that you specified the correct "iwb_filepath".')
 
-    # Normalize defunct Wikia URLs
-    origin_wiki_url = normalize_wikia_url(origin_wiki_url)
+    # Get origin API URL
+    try:
+        origin_api_url = get_mediawiki_api_url(origin_wiki_url, headers=headers)
+    except (HTTPError, ConnectionError, SSLError) as e:
+        print(e)
+        return None
 
-    # Determine the API URLs
-    origin_api_url = get_mediawiki_api_url(origin_wiki_url, headers=headers)
-    destination_api_url = get_mediawiki_api_url(destination_wiki_url, headers=headers)
-
-    # Validate the API URLs
     if origin_api_url is None:
         print(f"⚠ Unable to determine API URL for {origin_wiki_url}")
+        return None
+
+    # Get destination API URL
+    try:
+        destination_api_url = get_mediawiki_api_url(destination_wiki_url, headers=headers)
+    except (HTTPError, ConnectionError, SSLError) as e:
+        print(e)
         return None
 
     if destination_api_url is None:
@@ -418,12 +421,12 @@ def add_redirect_entry_from_url(origin_wiki_url: str, destination_wiki_url: str,
         return None
 
     # Request siteinfo data
-    origin_siteinfo = request_siteinfo(origin_api_url, headers=headers)
-    destination_siteinfo = request_siteinfo(destination_api_url, headers=headers)
-
-    # Validate the siteinfo data
-    if origin_siteinfo is None or destination_siteinfo is None:
-        print(f"⚠ Unable to add redirection from {origin_wiki_url} to {destination_wiki_url}.")
+    siteinfo_params = {'action': 'query', 'meta': 'siteinfo', 'siprop': 'general', 'format': 'json'}
+    try:
+        origin_siteinfo = query_mediawiki_api(origin_api_url, params=siteinfo_params, headers=headers)
+        destination_siteinfo = query_mediawiki_api(destination_api_url, params=siteinfo_params, headers=headers)
+    except (HTTPError, ConnectionError, SSLError, MediaWikiAPIError) as e:
+        print(e)
         return None
 
     # Extract relevant metadata from the siteinfo data
@@ -449,20 +452,19 @@ def add_redirect_entry_from_url(origin_wiki_url: str, destination_wiki_url: str,
     return entry_id
 
 
-def confirm_property_value_cli(prop: str, expected_type: str, current_value, new_value) -> bool:
-    user_input = None
+def confirm_yes_no(caption: str) -> bool:
+    no_values = {"", "n", "no"}
+    yes_values = {"y", "yes"}
 
-    # Loop until the user confirms or rejects the change
-    while user_input not in (YES_VALUES | NO_VALUES):
-        user_input = input(f'⚠ {new_value} does not look like a {expected_type}. Is this value correct? (Y/N): ')
-        user_input = user_input.lower().strip()
+    user_input = input(caption).lower().strip()
+    while user_input not in (yes_values | no_values):
+        print("⚠ Unrecognized input. Please enter 'Y' or 'N' (blank counts as 'N').")
+        user_input = input(caption).lower().strip()
 
-    # If the user rejects the change, cancel the edit
-    if user_input in NO_VALUES:
-        print(f'ℹ {prop} not changed from "{current_value}"): ')
-        return False
-    else:
+    if user_input in yes_values:
         return True
+    else:
+        return False
 
 
 def get_wiki_metadata_cli(site_class, key_properties, headers: Optional[dict] = None):
@@ -472,7 +474,7 @@ def get_wiki_metadata_cli(site_class, key_properties, headers: Optional[dict] = 
 
     :param site_class: Whether the site is the origin or destination site
     :param key_properties: The properties that need to be collected for this site
-    :param headers: Headers to use for HTTP/HTTPS requests (e.g. user-agent)
+    :param headers: Headers to use for HTTP requests (e.g. user-agent)
     :return: Dict of the required properties
     """
 
@@ -480,34 +482,33 @@ def get_wiki_metadata_cli(site_class, key_properties, headers: Optional[dict] = 
     wiki_url = ""
     while wiki_url.strip() == "":
         wiki_url = input(f"📥 Enter {site_class} wiki URL: ")
-    response = request_with_error_handling(wiki_url, headers=headers)
+    response = request_with_http_fallback(wiki_url, headers=headers)
 
     wiki_data = {}
     auto_properties = []  # Properties that have been added automatically (i.e. that the user may want to edit)
 
     if not response:
-        print(f"⚠ Unable to connect to {wiki_url}")
-
-    # Check wiki software
-    wiki_software = determine_wiki_software(response)
-
-    # For MediaWiki wikis, retrieve details via the API
-    if wiki_software == "mediawiki":
-        print(f"🕑 Getting {site_class} site info...")
-        api_url = get_mediawiki_api_url(response)
-        if api_url is None:
-            print(f"⚠ Unable to automatically retrieve API URL for {wiki_url}.")
-            api_url = input(f"📥 Enter {site_class} wiki API URL: ")
-            print(f"🕑 Getting {site_class} site info...")
-
-        siteinfo = request_siteinfo(api_url, headers=headers)
-        if siteinfo is not None:
-            wiki_data = extract_site_metadata_from_siteinfo(siteinfo)
-        else:
-            print(f"⚠ Unable to retrieve metadata via MediaWiki API")
+        print(f"⚠ Unable to connect to {wiki_url} . Details will need to be entered manually.")
     else:
-        print(f"⚠ {wiki_url} uses currently unsupported software. Details will need to be entered manually.")
-    
+        # Check wiki software
+        wiki_software = determine_wiki_software(response)
+
+        # For MediaWiki wikis, retrieve details via the API
+        if wiki_software == "mediawiki":
+            print(f"🕑 Getting {site_class} site info...")
+            api_url = get_mediawiki_api_url(response)
+            if api_url is None:
+                print(f"⚠ Unable to automatically retrieve API URL for {wiki_url}.")
+                api_url = input(f"📥 Enter {site_class} wiki API URL: ")
+                print(f"🕑 Getting {site_class} site info...")
+
+            siteinfo_params = {'action': 'query', 'meta': 'siteinfo', 'siprop': 'general', 'format': 'json'}
+            siteinfo = query_mediawiki_api(api_url, params=siteinfo_params, headers=headers)
+            wiki_data = extract_site_metadata_from_siteinfo(siteinfo)
+
+        else:
+            print(f"⚠ {wiki_url} uses currently unsupported software. Details will need to be entered manually.")
+
     # If the icon URL was not found via the API, try to find it from the HTML
     if "icon path" in key_properties:
         icon_path = wiki_data.get("icon path")
@@ -532,16 +533,8 @@ def get_wiki_metadata_cli(site_class, key_properties, headers: Optional[dict] = 
 
     # Check if the user wants to edit the retrieved metadata
     if len(auto_properties) > 0:
-        user_input = None
-        while user_input not in (YES_VALUES | NO_VALUES):
-            user_input = input(f"❔ Edit auto-generated metadata (Y/N)?: ")
-            user_input = user_input.lower().strip()
-
-            if user_input in NO_VALUES:
-                return wiki_data
-            elif user_input in YES_VALUES:
-                break
-            print("⚠ Unrecognized input. Please enter Y or N, or leave blank to skip.")
+        if not confirm_yes_no(f"❔ Edit auto-generated metadata (Y/N)?: "):
+            return wiki_data
 
         # Allow the user to edit the properties
         print(f"ℹ Enter new values for {site_class} wiki properties. Leave blank to retain the current value.")
@@ -552,10 +545,13 @@ def get_wiki_metadata_cli(site_class, key_properties, headers: Optional[dict] = 
             if new_value != "":
                 # Basic sanity checks for common input errors
                 if "url" in prop and (" " in new_value or "." not in new_value):
-                    if not confirm_property_value_cli(prop, "URL", current_value, new_value):
+                    # If the user rejects the change, cancel the edit
+                    if not confirm_yes_no(f'⚠ {new_value} does not look like a URL. Is this value correct? (Y/N): '):
+                        print(f'ℹ {prop} not changed from "{current_value}"): ')
                         continue
                 elif "path" in prop and "/" not in new_value:
-                    if not confirm_property_value_cli(prop, "path", current_value, new_value):
+                    if not confirm_yes_no(f'⚠ {new_value} does not look like a path. Is this value correct? (Y/N): '):
+                        print(f'ℹ {prop} not changed from "{current_value}"): ')
                         continue
 
                 # Update the property

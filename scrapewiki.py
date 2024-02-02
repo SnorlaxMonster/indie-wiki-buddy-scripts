@@ -1,12 +1,18 @@
 """
 Python script for scraping metadata from wikis
 """
-import requests
 import lxml.html
 import re
+import warnings
+import requests
+from requests.exceptions import SSLError
 from io import BytesIO
-from typing import Optional
+from typing import Optional, Generator
 from urllib.parse import urlparse, urlunparse, urljoin, ParseResult as UrlParseResult
+
+
+class MediaWikiAPIError(Exception):
+    pass
 
 
 def normalize_relative_url(relative_url: str | UrlParseResult, absolute_url: str | UrlParseResult) -> str:
@@ -87,57 +93,28 @@ def normalize_wikia_url(original_url: str) -> str:
     return urlunparse(parsed_url)
 
 
-def request_with_error_handling(raw_url: str, ignorable_errors: Optional[list[int]] = None,
-                                **kwargs) -> Optional[requests.Response]:
+def request_with_http_fallback(raw_url: str, **kwargs) -> requests.Response:
     """
-    Given a base URL, attempts to resolve the URL as HTTPS, then falls back to HTTP if that isn't possible.
+    Attempts to resolve the URL, then falls back to HTTP if an SSLError occurred.
 
     :param raw_url: URL to resolve
     :param ignorable_errors: Error codes that should be ignored as long as the response is not null
-    :param kwargs: kwargs to use for the HTTP/HTTPS requests
+    :param kwargs: kwargs to use for the HTTP requests
     :return: GET request response
     """
-    ignorable_errors = [] if (ignorable_errors is None) else ignorable_errors
     url = normalize_url_protocol(raw_url)
+    parsed_url = urlparse(url)
 
     # GET request the URL
     try:
         response = requests.get(url, **kwargs)
 
     # If using HTTPS results in an SSLError, try HTTP instead
-    except requests.exceptions.SSLError:
-        parsed_url = urlparse(url)
-        if parsed_url.scheme != "http":
-            print(f"⚠ SSLError. Defaulting to HTTP connection for {raw_url}")
-            url = urlunparse(parsed_url._replace(scheme="http"))
-            return request_with_error_handling(url, ignorable_errors=ignorable_errors, **kwargs)
-        else:
-            print(f"⚠ SSLError: Unable to connect to {raw_url} , even via HTTP")
-            return None
+    except SSLError and parsed_url.scheme != "http":
+        print(f"⚠ SSLError for {raw_url} . Defaulting to HTTP connection.")
+        url = urlunparse(parsed_url._replace(scheme="http"))
+        response = requests.get(url, **kwargs)
 
-    # If unable to connect to the URL at all, return None
-    except requests.exceptions.ConnectionError:
-        print(f"⚠ ConnectionError: Unable to connect to {url}")
-        return None
-
-    # If the response is an error, handle the error
-    if not response:
-        # If the error is in the set of acceptable errors and the response included any content, ignore the error
-        if response.status_code in ignorable_errors and response.content:
-            pass
-
-        # For Error 404 and 410, the wiki presumably does not exist, so abort
-        # This could mean that only the Main Page does not exist (while the wiki does), but that case is ignored
-        if response.status_code in (404, 410):
-            print(f"⚠ Error {response.status_code} returned by {url} . Page does not exist. Aborting.")
-            return None
-
-        # For other errors, they can usually be fixed by adding a user-agent
-        else:
-            print(f"⚠ Error {response.status_code} returned by {url} . Aborting.")
-            return None
-
-    # Otherwise, return the response
     return response
 
 
@@ -182,8 +159,8 @@ def get_fandom_url_from_breezewiki(response: Optional[requests.Response]) -> Opt
     If the input page is a BreezeWiki site, returns the original Fandom URL.
     Otherwise returns None.
 
-    :param response: HTTP/HTTPS response for a wiki page request
-    :return:
+    :param response: HTTP response for a wiki page request
+    :return: URL of the same page on Fandom if the page is a BreezeWiki page, otherwise None
     """
     # Parse the HTML
     parsed_html = lxml.html.parse(BytesIO(response.content))
@@ -226,19 +203,19 @@ def get_favicon_url(response: Optional[requests.Response]) -> Optional[str]:
 
 def get_mediawiki_api_url(wiki_page: str | requests.Response, headers: Optional[dict] = None) -> Optional[str]:
     """
-    Given a URL or HTTP/HTTPS response for a wiki page, determines the wiki's API URL.
+    Given a URL or HTTP response for a wiki page, determines the wiki's API URL.
 
-    :param wiki_page: URL or HTTP/HTTPS response for a wiki page
+    :param wiki_page: URL or HTTP response for a wiki page
     :param headers: Headers to include in the request (e.g. user-agent) if provided a URL
     :return: Wiki's API URL
     """
     # If provided a URL, run an HTTP request
     if type(wiki_page) is str:
         url = wiki_page
-        response = request_with_error_handling(url, headers=headers)
-        if wiki_page is None:
-            return None
-
+        url = normalize_wikia_url(url)  # Normalize defunct Wikia URLs
+        response = request_with_http_fallback(url, headers=headers)
+        if not response:
+            response.raise_for_status()
     else:
         response = wiki_page
 
@@ -278,44 +255,72 @@ def get_mediawiki_api_url(wiki_page: str | requests.Response, headers: Optional[
     return None
 
 
-def query_mediawiki_api(api_url: str, query_params: dict, headers: Optional[dict] = None) -> Optional[dict]:
+def query_mediawiki_api(api_url: str, params: dict, **kwargs) -> dict:
     """
     Runs a MediaWiki API query with the specified parameters.
 
-    :param api_url:
-    :param query_params: Query parameters to use
-    :param headers: Headers to include in the request (e.g. user-agent)
+    :param api_url: MediaWiki API URL
+    :param kwargs: kwargs to use for the HTTP requests
     :return: API query result
+    :raises: HTTPError: If the API request returns an HTTP error code
+    :raises: MediaWikiAPIError: If the API query returns an error
     """
     # GET request API query
-    response = request_with_error_handling(api_url, params=query_params, headers=headers)
+    response = request_with_http_fallback(api_url, params=params, **kwargs)
 
-    # If the response is an error, do not attempt to parse it as JSON
+    # If the response is an error, raise an HTTPError
     if not response:
-        print(f"Error {response.status_code} from {api_url}")
-        return None
+        response.raise_for_status()
 
     # Parse as JSON
-    query_json = response.json()
+    result = response.json()
 
-    # If the response contains an error, do not attempt the retrieve the content
-    if query_json.get("error"):
-        print(f"Error {query_json['error'].get('code')} from {api_url}")
-        return None
+    # Check for errors and warnings
+    if 'error' in result:
+        raise MediaWikiAPIError(result['error'])
+    if 'warnings' in result:
+        warnings.warn(result['warnings'])
 
-    return query_json["query"]
+    return result['query']
 
 
-def request_siteinfo(api_url: str, siprop: str = 'general', headers: Optional[dict] = None) -> Optional[dict]:
+def query_mediawiki_api_with_continue(api_url: str, params: dict, headers: Optional[dict] = None) \
+        -> Generator[dict, None, None]:
     """
-    Runs a "siteinfo" query using the MediaWiki API of the specified wiki.
+    Runs a MediaWiki API query with the specified parameters.
 
     :param api_url: MediaWiki API URL
-    :param siprop: Value to use for the siprop parameter (defaults to 'general')
-    :param headers: Headers to include in the request (e.g. user-agent).
-    :return: siteinfo query result
+    :param params: Query parameters
+    :param headers: Headers to include in the request (e.g. user-agent)
+    :return: Generator of API query results
+    :raises: HTTPError: If the API request returns an HTTP error code
+    :raises: MediaWikiAPIError: If the API query returns an error
     """
-    siteinfo_params = {'action': 'query', 'meta': 'siteinfo', 'siprop': siprop, 'format': 'json'}
-    siteinfo = query_mediawiki_api(api_url, siteinfo_params, headers=headers)
 
-    return siteinfo
+    # Based on https://www.mediawiki.org/wiki/API:Continue#Example_3:_Python_code_for_iterating_through_all_results
+    params['action'] = 'query'
+    params['format'] = 'json'
+    last_continue = {}
+    while True:
+        # Clone original request
+        request_params = params.copy()
+        # Modify it with the values returned in the 'continue' section of the last result.
+        request_params.update(last_continue)
+        # Call API
+        response = requests.get(api_url, params=request_params, headers=headers)
+
+        # If the response is an error, raise an HTTPError
+        if not response:
+            response.raise_for_status()
+
+        # Process result
+        result = response.json()
+        if 'error' in result:
+            raise MediaWikiAPIError(result['error'])
+        if 'warnings' in result:
+            warnings.warn(result['warnings'])
+        if 'query' in result:
+            yield result['query']
+        if 'continue' not in result:
+            break
+        last_continue = result['continue']
