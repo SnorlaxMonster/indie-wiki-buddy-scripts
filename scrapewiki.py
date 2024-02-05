@@ -251,18 +251,22 @@ def get_mediawiki_api_url(wiki_page: str | requests.Response, headers: Optional[
     # If EditURI is missing, try to find the searchform element and determine the API URL from that
     searchform_node = parsed_html.find('//form[@id="searchform"]')
     if searchform_node is not None:
-        print(f"ℹ Retrieved API URL for {response.url} via searchform node")
-        api_url = searchform_node.get("action").replace('index.php', 'api.php')
+        searchform_node_url = searchform_node.get("action")
+        if searchform_node_url.endswith('index.php'):
+            print(f"ℹ Retrieved API URL for {response.url} via searchform node")
+            api_url = searchform_node_url.replace('index.php', 'api.php')
 
-        return normalize_relative_url(api_url, response.url)
+            return normalize_relative_url(api_url, response.url)
 
     # If EditURI is missing, try to find the permalink URL and determine the API URL from that
     permalink_node = parsed_html.find('//li[@id="t-permalink"]/a')
     if permalink_node is not None:
-        print(f"ℹ Retrieved API URL for {response.url} via permalink node")
-        api_url = permalink_node.get("href").replace('index.php', 'api.php')
+        permalink_node_url = permalink_node.get("href")
+        if permalink_node_url.endswith('index.php'):
+            print(f"ℹ Retrieved API URL for {response.url} via permalink node")
+            api_url = permalink_node_url.replace('index.php', 'api.php')
 
-        return normalize_relative_url(api_url, response.url)
+            return normalize_relative_url(api_url, response.url)
 
     # If the page is a BreezeWiki page, identify the original Fandom URL and retrieve the API URL from Fandom
     if ".fandom.com" not in response.url:
