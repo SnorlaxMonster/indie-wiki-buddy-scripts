@@ -3,6 +3,7 @@ Python script for generating metadata about wikis
 """
 import datetime
 import re
+import pandas as pd
 from requests.exceptions import HTTPError, SSLError
 from urllib.parse import urlparse
 from typing import Optional
@@ -15,8 +16,39 @@ def extract_mediawiki_version(generator_string):
     return match.group(1)
 
 
+def retrieve_mediawiki_recentchanges(api_url: str, window_end: datetime.datetime, extra_params: Optional[dict] = None,
+                                     headers: Optional[dict] = None) -> pd.DataFrame:
+    """
+    Returns the full set of Recent Changes back to a specific date.
+    By default, it excludes bots and only includes page edits, page creations, and category additions.
+
+    :param api_url: MediaWiki API URL
+    :param window_end: Date of the earliest Recent Changes entry to include
+    :param extra_params: Parameters to include in the Recent Changes query, beyond the default values
+    :param headers: Headers to include in the request (e.g. user-agent)
+    :return: DataFrame of Recent Changes
+    """
+    # Prepare query params
+    # NOTE: The MediaWiki API is very particular about date formats. Timezone must be written in Z format.
+    assert window_end.tzinfo == datetime.timezone.utc  # TODO: Handle wikis using a timezone other than UTC
+    rcend = window_end.strftime('%Y-%m-%dT%H:%M:%SZ')
+    query_params = {'list': 'recentchanges', 'rcshow': '!bot', 'rclimit': 'max', 'rcend': rcend,
+                    'rctype': 'edit|new|categorize'}
+    if extra_params is not None:
+        query_params.update(extra_params)
+
+    # Execute query, iterating over each continuation (MediaWiki typically returns up to 500 results per query)
+    rc_contents = []
+    for result in query_mediawiki_api_with_continue(api_url, params=query_params, headers=headers):
+        rc_contents += result['recentchanges']
+
+    rc_df = pd.DataFrame(rc_contents)
+    rc_df["timestamp"] = pd.to_datetime(rc_df["timestamp"])
+    return rc_df
+
+
 def profile_mediawiki_recentchanges(api_url: str, rc_days_limit: int, siteinfo: dict,
-                                    headers: Optional[dict] = None) -> tuple[int, str]:
+                                    headers: Optional[dict] = None) -> tuple[int, Optional[datetime.datetime]]:
     """
     Determines the number of content-namespace edits by humans to the wiki within the last X days,
     and the date of the most recent content-namespace edit by a human.
@@ -27,58 +59,54 @@ def profile_mediawiki_recentchanges(api_url: str, rc_days_limit: int, siteinfo: 
     :param headers: Headers to include in the request (e.g. user-agent)
     :return: number of edits in the time window, and timestamp of the last edit
     """
-    # Determine content namespaces
-    content_namespaces = [entry.get('id') for entry in siteinfo["namespaces"].values() if
-                          entry.get('content') is not None]
-
-    # Calculate rcend
-    # NOTE: The MediaWiki API is very particular about date formats. Timezone must be written in Z format.
+    # Calculate window_end
     #current_timestamp = datetime.datetime.fromisoformat(siteinfo["general"]["time"])  # Not supported until Python 3.11
     current_timestamp = datetime.datetime.strptime(siteinfo["general"]["time"], '%Y-%m-%dT%H:%M:%S%z')
     window_end = current_timestamp - datetime.timedelta(rc_days_limit)
-    assert window_end.tzinfo == datetime.timezone.utc  # TODO: Handle wikis using a timezone other than UTC
-    rcend = datetime.datetime.strftime(window_end, '%Y-%m-%dT%H:%M:%SZ')
 
-    # Prepare query parameters
-    rcnamespace = '|'.join(str(ns) for ns in content_namespaces)
+    # Determine content namespaces
+    content_namespaces = [entry.get('id') for entry in siteinfo["namespaces"].values()
+                          if entry.get('content') is not None]
 
-    recentchanges_params = {'list': 'recentchanges', 'rcshow': '!bot', 'rclimit': 'max',
-                            'rctype': 'edit|new|categorize', 'rcnamespace': rcnamespace, 'rcend': rcend}
-
-    # Retrieve all content namespace edits (incl. page creations) in the last [days_lookback] days performed by humans
-    rc_contents = []
-    for result in query_mediawiki_api_with_continue(api_url, recentchanges_params, headers=headers):
-        rc_contents += result['recentchanges']
+    # Retrieve Recent Changes
+    extra_params = {
+        "rcnamespace": '|'.join(str(ns) for ns in content_namespaces),
+        "rcend": window_end.strftime('%Y-%m-%dT%H:%M:%SZ'),
+    }
+    rc_df = retrieve_mediawiki_recentchanges(api_url, window_end, extra_params=extra_params, headers=headers)
 
     # Count edits in the time window
-    edit_count = len(rc_contents)
+    edit_count = len(rc_df)
 
     # Find latest edit
-    if len(rc_contents) > 0:
-        latest_edit_timestamp = rc_contents[0].get("timestamp")
+    if len(rc_df) > 0:
+        latest_edit_timestamp = rc_df["timestamp"].max()
 
-    # If there were no edits in the specified time window, redo the request without specifying a time restriction
+    # If there were no edits in the time window, request Recent Changes without a time restriction
     else:
-        recentchanges_params.pop('rcend')
-        recentchanges_params['rclimit'] = 1
-        rc_extended = next(query_mediawiki_api_with_continue(api_url, recentchanges_params, headers=headers))
+        query_params = {'list': 'recentchanges', 'rcshow': '!bot', 'rclimit': 1, 'rctype': 'edit|new|categorize',
+                        "rcnamespace": '|'.join(str(ns) for ns in content_namespaces)}
+        rc_extended = query_mediawiki_api(api_url, query_params, headers=headers)
+
+        # Get the most recent edit from the Recent Changes result
         rc_contents = rc_extended["recentchanges"]
         if len(rc_contents) > 0:
-            latest_edit_timestamp = rc_contents[0].get("timestamp")
+            latest_edit_timestamp = rc_df["timestamp"].max()
         else:
             latest_edit_timestamp = None
 
     return edit_count, latest_edit_timestamp
 
 
-def profile_mediawiki_site(api_url, rc_days_limit=30, headers: Optional[dict] = None):
+def profile_mediawiki_site(api_url: str, rc_days_limit: int = 30, headers: Optional[dict] = None):
     # Request siteinfo data
     siteinfo_params = {'format': 'json', 'action': 'query', 'meta': 'siteinfo',
                        'siprop': 'general|namespaces|statistics|rightsinfo'}
     siteinfo = query_mediawiki_api(api_url, params=siteinfo_params, headers=headers)
 
     # Request recentchanges data
-    recent_edit_count, latest_edit = profile_mediawiki_recentchanges(api_url, rc_days_limit, siteinfo, headers=headers)
+    recent_edit_count, latest_edit_timestamp = profile_mediawiki_recentchanges(api_url, rc_days_limit, siteinfo,
+                                                                               headers=headers)
 
     # Extract data
     site_metadata = {
@@ -97,7 +125,7 @@ def profile_mediawiki_site(api_url, rc_days_limit=30, headers: Optional[dict] = 
         "content_pages": siteinfo["statistics"]["articles"],
         "active_users": siteinfo["statistics"]["activeusers"],
         "recent_edit_count": recent_edit_count,
-        "latest_edit_timestamp": latest_edit,
+        "latest_edit_timestamp": str(latest_edit_timestamp) if latest_edit_timestamp is not None else None,
 
         # Licensing
         "licence_name": siteinfo["rightsinfo"]["text"],

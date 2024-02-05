@@ -110,7 +110,6 @@ def request_with_http_fallback(raw_url: str, **kwargs) -> requests.Response:
     Attempts to resolve the URL, then falls back to HTTP if an SSLError occurred.
 
     :param raw_url: URL to resolve
-    :param ignorable_errors: Error codes that should be ignored as long as the response is not null
     :param kwargs: kwargs to use for the HTTP requests
     :return: GET request response
     """
@@ -284,6 +283,7 @@ def query_mediawiki_api(api_url: str, params: dict, **kwargs) -> dict:
     Runs a MediaWiki API query with the specified parameters.
 
     :param api_url: MediaWiki API URL
+    :param params: params to use for the HTTP requests
     :param kwargs: kwargs to use for the HTTP requests
     :return: API query result
     :raises: HTTPError: If the API request returns an HTTP error code
@@ -292,7 +292,7 @@ def query_mediawiki_api(api_url: str, params: dict, **kwargs) -> dict:
     # GET request API query
     response = request_with_http_fallback(api_url, params=params, **kwargs)
 
-    # If the response is Error 429 (too many requests), sleep for 30 seconds then try again (once only)
+    # If the response is Error 429 (Too Many Requests), sleep for 30 seconds then try again (once only)
     if response.status_code == 429:
         print(f"🕑 Error 429 Too Many Requests. Sleeping for 30 seconds...")
         time.sleep(30)
@@ -354,3 +354,4 @@ def query_mediawiki_api_with_continue(api_url: str, params: dict, headers: Optio
         if 'continue' not in result:
             break
         last_continue = result['continue']
+
