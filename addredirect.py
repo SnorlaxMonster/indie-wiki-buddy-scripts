@@ -456,6 +456,31 @@ def confirm_yes_no(caption: str) -> bool:
         return False
 
 
+def get_iwb_filepath() -> str:
+    # If iwb_path.txt is defined, use that as the path to the IWB folder
+    if os.path.isfile("iwb_path.txt"):
+        with open("iwb_path.txt", "r", encoding="utf-8") as file:
+            iwb_filepath = file.read()
+            print(f"ℹ Using saved indie-wiki-buddy repo filepath {iwb_filepath}")
+
+    # If the script is being run from the IWB folder, detect that and use the current folder as the filepath
+    elif os.path.isfile("./data/sitesEN.json"):
+        iwb_filepath = "."
+        print(f"ℹ Detected script as being run from the indie-wiki-buddy repo")
+
+    # Otherwise, request the user specify the filepath
+    else:
+        print("⚠ Unable to find path to indie-wiki-buddy repo!")
+        iwb_filepath = input(f"📥 Enter path to indie-wiki-buddy repo: ")
+        with open("iwb_path.txt", "w", encoding="utf-8") as file:
+            file.write(iwb_filepath)
+        user_choice = confirm_yes_no("❔ Save filepath for future use (Y/N)?: ")
+        if user_choice:
+            print(f"💾 Saved path to iwb_path.txt! It will be used next time you run the script!")
+
+    return iwb_filepath
+
+
 def get_wiki_metadata_cli(site_class: str, key_properties: Iterable, headers: Optional[dict] = None):
     """
     CLI for preparing the data for a new origin or destination site.
@@ -555,7 +580,9 @@ def main():
     Interactive CLI for adding new wikis one at a time
     """
     headers = {'User-Agent': 'Mozilla/5.0'}
-    iwb_filepath = ".."
+
+    # Get IWB filepath
+    iwb_filepath = get_iwb_filepath()
 
     # Get origin wiki data
     origin_key_properties = ["base url", "name", "language", "main page", "content path"]
