@@ -184,7 +184,7 @@ def download_wiki_icon(icon_url: str, wiki_name: str, language_code: str,
     # Write to file
     image_file = Image.open(BytesIO(icon_file_response.content))
     image_file = image_file.resize((16, 16))
-    image_file.save(icon_filepath)  # PIL ensures that conversion from ICO to PNG is safe
+    image_file.save(icon_filepath, optimize=True)  # PIL ensures that conversion from ICO to PNG is safe
 
     return icon_filename
 
