@@ -13,7 +13,7 @@ from typing import Optional
 
 from scrapewiki import (get_mediawiki_api_url, query_mediawiki_api, query_mediawiki_api_with_continue,
                         extract_metadata_from_siteinfo, extract_metadata_from_fextralife_page, determine_wiki_software,
-                        normalize_url_protocol, WikiSoftware, MediaWikiAPIError)
+                        request_with_http_fallback, normalize_url_protocol, WikiSoftware, MediaWikiAPIError)
 
 
 def retrieve_fextralife_sitemap(base_url: str, headers: Optional[dict] = None) -> lxml.etree:
@@ -299,7 +299,8 @@ def profile_wiki(wiki_url: str, full_profile: bool = True, headers: Optional[dic
     """
 
     # GET request input URL
-    response = requests.get(normalize_url_protocol(wiki_url), headers=headers)
+    wiki_url = normalize_url_protocol(wiki_url)
+    response = request_with_http_fallback(wiki_url, headers=headers)
     if not response:
         response.raise_for_status()
 
@@ -329,11 +330,12 @@ def main():
     wiki_url = ""
     while wiki_url.strip() == "":
         wiki_url = input(f"📥 Enter wiki URL: ")
+    wiki_url = normalize_url_protocol(wiki_url)
 
     # Detect wiki software
-    print(f"🕑 Resolving input URL...")
+    print(f"🕑 Resolving {wiki_url}")
     try:
-        response = requests.get(normalize_url_protocol(wiki_url), headers=headers)
+        response = request_with_http_fallback(wiki_url, headers=headers)
     except (HTTPError, ConnectionError, SSLError) as e:
         print(e)
         return

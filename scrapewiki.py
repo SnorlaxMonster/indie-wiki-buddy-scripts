@@ -327,13 +327,13 @@ def query_mediawiki_api(api_url: str, params: dict, **kwargs) -> dict:
     :raises: MediaWikiAPIError: If the API query returns an error
     """
     # GET request API query
-    response = request_with_http_fallback(api_url, params=params, **kwargs)
+    response = requests.get(api_url, params=params, **kwargs)
 
     # If the response is Error 429 (Too Many Requests), sleep for 30 seconds then try again (once only)
     if response.status_code == 429:
         print(f"🕑 Error 429 Too Many Requests. Sleeping for 30 seconds...")
         time.sleep(30)
-        response = request_with_http_fallback(api_url, params=params, **kwargs)
+        response = requests.get(api_url, params=params, **kwargs)
 
     # If the response is an error, raise an HTTPError
     if not response:

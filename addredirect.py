@@ -165,7 +165,8 @@ def download_wiki_icon(icon_url: str, wiki_name: str, language_code: str,
     """
     # Download icon file
     try:
-        icon_file_response = requests.get(normalize_url_protocol(icon_url), headers=headers)
+        icon_url = normalize_url_protocol(icon_url)
+        icon_file_response = requests.get(icon_url, headers=headers)
     except ConnectionError:
         icon_file_response = None
 
