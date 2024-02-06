@@ -4,80 +4,43 @@ Python script for adding a new wiki redirect
 import re
 import json
 import os
-from urllib.parse import urlparse
 import unicodedata
 import requests
+from urllib.parse import urlparse, urlunparse
 from requests.exceptions import HTTPError, SSLError
 from io import BytesIO
 from typing import Optional, Iterable
 from PIL import Image
 
-from scrapewiki import normalize_url_protocol, get_mediawiki_api_url, get_favicon_url, determine_wiki_software, \
-    request_with_http_fallback, query_mediawiki_api, extract_hostname, MediaWikiAPIError
-
-
-def extract_site_metadata_from_siteinfo(siteinfo: dict) -> dict:
-    """
-    Extracts the important data from a siteinfo result, and transforms it into a standardized format
-
-    :param siteinfo: MediaWiki API response for a "siteinfo" query including siprop=general
-    :return: Standardized site properties
-    """
-    siteinfo_general = siteinfo["general"]
-
-    base_url = extract_hostname(siteinfo_general["base"])
-    wiki_name = siteinfo_general["sitename"]
-    full_language = siteinfo_general["lang"]  # NOTE: The language retrieved this way will include the dialect
-    normalized_language = full_language.split('-')[0]
-    main_page = siteinfo_general["mainpage"].replace(" ", "_")
-    content_path = siteinfo_general["articlepath"].replace("$1", "")
-    search_path = siteinfo_general["script"]
-    icon_path = siteinfo_general.get("favicon")  # Not guaranteed to be present
-
-    # Detect if the wiki is on a wikifarm
-    logo_path = siteinfo_general.get("logo", "")  # Not guaranteed to be present
-    wikifarm = detect_wikifarm([base_url, logo_path])
-
-    # Apply standard wiki name changes
-    if ".fandom.com" in base_url:
-        wiki_name = wiki_name.replace(" Wiki", " Fandom Wiki")
-
-    # For Fandom wikis, ensure the language path is part of the base_url instead of the content_path
-    if ".fandom.com" in base_url and normalized_language != "en":
-        full_path_parts = (base_url + content_path).split("/")
-        if full_path_parts[1] == normalized_language:
-            base_url = "/".join(full_path_parts[0:2])
-            content_path = "/" + "/".join(full_path_parts[2:])
-
-    # Return extracted properties
-    site_properties = {
-        "name": wiki_name,
-        "base url": base_url,
-        "full language": full_language,
-        "language": normalized_language,
-        "main page": main_page,
-        "content path": content_path,
-        "search path": search_path,
-        "icon path": icon_path,
-        "wikifarm": wikifarm,
-        "platform": "mediawiki",  # This data necessarily comes from the MediaWiki API
-    }
-    return site_properties
+from scrapewiki import (normalize_url_protocol, get_mediawiki_api_url, query_mediawiki_api, get_mediawiki_favicon_url,
+                        extract_metadata_from_siteinfo, extract_metadata_from_fextralife_page, determine_wiki_software,
+                        request_with_http_fallback, WikiSoftware, MediaWikiAPIError)
+from profilewiki import profile_wiki
 
 
 def extract_topic_from_url(wiki_url: str) -> str:
-    # Retrieve the topic
-    normalized_url = normalize_url_protocol(wiki_url)
-    hostname = extract_hostname(normalized_url)
-    domain_parts = hostname.split('.')
-    topic = domain_parts[0].replace("-", "")
+    """
+    Auto-generate the topic portion of an Entry ID, based on the subdomain of the origin wiki.
 
-    return topic
+    :param wiki_url: URL of the origin wiki
+    :return: topic of an entry ID string
+    """
+    # Retrieve the subdomain
+    normalized_url = normalize_url_protocol(wiki_url)
+    hostname = urlparse(normalized_url).hostname
+    domain_parts = hostname.split('.')
+    subdomain = domain_parts[0]
+
+    # Extract topic from subdomain
+    if hostname.endswith(".fextralife.com"):
+        return subdomain.split('-')[0]  # Split language off Fextralife subdomain
+    else:
+        return subdomain.replace("-", "")
 
 
 def generate_entry_id(language: str, origin_url: str) -> str:
     """
-    Auto-generate an entry ID, based on the language and subdomain of the origin wiki.
+    Auto-generate an entry ID, based on the language and URL of the origin wiki.
 
     :param language: Normalized language code
     :param origin_url: URL of the origin wiki
@@ -106,8 +69,8 @@ def validate_wiki_languages(origin_site_metadata: dict, destination_site_metadat
         return False
 
     # Compare full languages (i.e. including dialect)
-    origin_full_language = origin_site_metadata.get("full language", origin_base_language)
-    destination_full_language = destination_site_metadata.get("full language", destination_base_language)
+    origin_full_language = origin_site_metadata.get("full_language", origin_base_language)
+    destination_full_language = destination_site_metadata.get("full_language", destination_base_language)
 
     # If the languages are the same but dialects differ, print a warning
     if origin_full_language != destination_full_language:
@@ -116,26 +79,12 @@ def validate_wiki_languages(origin_site_metadata: dict, destination_site_metadat
     return True
 
 
-def detect_wikifarm(url_list: Iterable[str]) -> Optional[str]:
-    # If the site URL or logo URL contains the name of a wikifarm, assume the wiki is hosted on that wikifarm
-    # Checking the logo URL should catch any wikis hosted on a wikifarm that use a custom URL
-
-    # This is only relevant for destinations, so "fandom" is not checked for (and it would likely give false positives)
-    known_wikifarms = {"shoutwiki", "wiki.gg", "miraheze", "wikitide"}
-
-    for wikifarm in known_wikifarms:
-        for url in url_list:
-            if wikifarm in url:
-                return wikifarm
-    return None
-
-
 def generate_origin_entry(origin_site_metadata: dict) -> dict:
     origin_entry = {
         "origin": origin_site_metadata["name"],
-        "origin_base_url": origin_site_metadata["base url"],
-        "origin_content_path": origin_site_metadata["content path"],
-        "origin_main_page": origin_site_metadata["main page"],
+        "origin_base_url": origin_site_metadata["base_url"],
+        "origin_content_path": origin_site_metadata["content_path"],
+        "origin_main_page": origin_site_metadata["main_page"],
     }
     return origin_entry
 
@@ -166,11 +115,11 @@ def generate_redirect_entry(origin_site_metadata: dict, destination_site_metadat
         "origins_label": origin_entry["origin"],
         "origins": [origin_entry],
         "destination": destination_site_metadata["name"],
-        "destination_base_url": destination_site_metadata["base url"],
+        "destination_base_url": destination_site_metadata["base_url"],
         "destination_platform": "mediawiki",
         "destination_icon": None,  # Filename cannot be determined at this time. Populate it when the icon is added.
-        "destination_main_page": destination_site_metadata["main page"],
-        "destination_search_path": destination_site_metadata["search path"],
+        "destination_main_page": destination_site_metadata["main_page"],
+        "destination_search_path": destination_site_metadata["search_path"],
     }
 
     # Generate tags
@@ -374,8 +323,6 @@ def add_redirect_entry_from_url(origin_wiki_url: str, destination_wiki_url: str,
     Creates a new redirect entry between the input URLs. Metadata is generated by retrieving it from the URLs.
     Also downloads the destination wiki's favicon to the appropriate folder, if necessary.
 
-    Since this process relies on the MediaWiki API, both wikis must be MediaWiki wikis for this to be successful.
-
     :param origin_wiki_url: URL of the origin wiki
     :param destination_wiki_url: URL of the destination wiki
     :param entry_id: ID to use for the new entry. Determined automatically if not specified.
@@ -387,40 +334,19 @@ def add_redirect_entry_from_url(origin_wiki_url: str, destination_wiki_url: str,
     if not os.path.isdir(os.path.join(iwb_filepath, "data")):
         raise OSError('Cannot find the "data" folder. Ensure that you specified the correct "iwb_filepath".')
 
-    # Get origin API URL
+    # Get site metadata for both wikis
     try:
-        origin_api_url = get_mediawiki_api_url(origin_wiki_url, headers=headers)
-    except (HTTPError, ConnectionError, SSLError) as e:
-        print(e)
-        return None
+        origin_site_metadata = profile_wiki(origin_wiki_url, full_profile=False, headers=headers)
+        if origin_site_metadata is None:
+            print(f"🗙 ERROR: Unable to retrieve metadata from {origin_wiki_url}")
 
-    if origin_api_url is None:
-        print(f"⚠ Unable to determine API URL for {origin_wiki_url}")
-        return None
+        destination_site_metadata = profile_wiki(destination_wiki_url, full_profile=False, headers=headers)
+        if destination_site_metadata is None:
+            print(f"🗙 ERROR: Unable to retrieve metadata from {destination_wiki_url}")
 
-    # Get destination API URL
-    try:
-        destination_api_url = get_mediawiki_api_url(destination_wiki_url, headers=headers)
-    except (HTTPError, ConnectionError, SSLError) as e:
-        print(e)
-        return None
-
-    if destination_api_url is None:
-        print(f"⚠ Unable to determine API URL for {destination_wiki_url}")
-        return None
-
-    # Request siteinfo data
-    siteinfo_params = {'action': 'query', 'meta': 'siteinfo', 'siprop': 'general', 'format': 'json'}
-    try:
-        origin_siteinfo = query_mediawiki_api(origin_api_url, params=siteinfo_params, headers=headers)
-        destination_siteinfo = query_mediawiki_api(destination_api_url, params=siteinfo_params, headers=headers)
     except (HTTPError, ConnectionError, SSLError, MediaWikiAPIError) as e:
         print(e)
         return None
-
-    # Extract relevant metadata from the siteinfo data
-    origin_site_metadata = extract_site_metadata_from_siteinfo(origin_siteinfo)
-    destination_site_metadata = extract_site_metadata_from_siteinfo(destination_siteinfo)
 
     # Check if languages are the same
     if not validate_wiki_languages(origin_site_metadata, destination_site_metadata):
@@ -431,7 +357,7 @@ def add_redirect_entry_from_url(origin_wiki_url: str, destination_wiki_url: str,
 
     # Get properties from site metadata
     language = origin_site_metadata["language"]
-    icon_url = destination_site_metadata["icon path"]
+    icon_url = destination_site_metadata["icon_path"]
 
     # Generate entry
     new_entry = generate_redirect_entry(origin_site_metadata, destination_site_metadata, entry_id)
@@ -457,6 +383,12 @@ def confirm_yes_no(caption: str) -> bool:
 
 
 def get_iwb_filepath() -> str:
+    """
+    CLI for determining the filepath to use to find Indie Wiki Buddy data.
+
+    :return: Filepath to Indie Wiki Buddy data
+    """
+
     # If iwb_path.txt is defined, use that as the path to the IWB folder
     if os.path.isfile("iwb_path.txt"):
         with open("iwb_path.txt", "r", encoding="utf-8") as file:
@@ -508,8 +440,9 @@ def get_wiki_metadata_cli(site_class: str, key_properties: Iterable, headers: Op
         wiki_software = determine_wiki_software(response)
 
         # For MediaWiki wikis, retrieve details via the API
-        if wiki_software == "mediawiki":
-            print(f"🕑 Getting {site_class} site info...")
+        if wiki_software == WikiSoftware.MEDIAWIKI:
+            print(f"ℹ Detected MediaWiki software")
+            print(f"🕑 Getting {site_class} wiki info...")
             api_url = get_mediawiki_api_url(response)
             if api_url is None:
                 print(f"⚠ Unable to automatically retrieve API URL for {wiki_url}.")
@@ -518,16 +451,21 @@ def get_wiki_metadata_cli(site_class: str, key_properties: Iterable, headers: Op
 
             siteinfo_params = {'action': 'query', 'meta': 'siteinfo', 'siprop': 'general', 'format': 'json'}
             siteinfo = query_mediawiki_api(api_url, params=siteinfo_params, headers=headers)
-            wiki_data = extract_site_metadata_from_siteinfo(siteinfo)
+            wiki_data = extract_metadata_from_siteinfo(siteinfo)
+
+            # If the icon URL was not found via the standard method, try to find it from the HTML
+            if "icon_path" in key_properties:
+                icon_path = wiki_data.get("icon_path")
+                if icon_path is None:
+                    wiki_data["icon_path"] = get_mediawiki_favicon_url(response)
+
+        elif wiki_software == WikiSoftware.FEXTRALIFE:
+            print(f"ℹ Detected Fextralife software")
+            print(f"🕑 Getting {site_class} wiki info...")
+            wiki_data = extract_metadata_from_fextralife_page(response)
 
         else:
             print(f"⚠ {wiki_url} uses currently unsupported software. Details will need to be entered manually.")
-
-    # If the icon URL was not found via the API, try to find it from the HTML
-    if "icon path" in key_properties:
-        icon_path = wiki_data.get("icon path")
-        if icon_path is None:
-            wiki_data["icon path"] = get_favicon_url(response)
 
     # Check all key properties. Print retrieved ones, require manual entry of missing ones.
     for prop in key_properties:
@@ -585,7 +523,7 @@ def main():
     iwb_filepath = get_iwb_filepath()
 
     # Get origin wiki data
-    origin_key_properties = ["base url", "name", "language", "main page", "content path"]
+    origin_key_properties = ["base_url", "name", "language", "main_page", "content_path"]
     origin_site_metadata = get_wiki_metadata_cli("origin", origin_key_properties, headers=headers)
 
     # Determine sites JSON filepath
@@ -594,7 +532,7 @@ def main():
 
     # Check whether origin wiki is already present
     redirects_list = read_sites_json(sites_json_filepath)
-    origin_base_url = origin_site_metadata["base url"]
+    origin_base_url = origin_site_metadata["base_url"]
 
     existing_origin_redirect = validate_origin_uniqueness(redirects_list, origin_base_url)
     if existing_origin_redirect is not None:
@@ -605,7 +543,7 @@ def main():
         print(f"✅ {origin_base_url} is a new entry!")
 
     # Get destination wiki data
-    destination_key_properties = ["base url", "name", "language", "main page", "search path", "platform", "icon path"]
+    destination_key_properties = ["base_url", "name", "language", "main_page", "search_path", "platform", "icon_path"]
     destination_site_metadata = get_wiki_metadata_cli("destination", destination_key_properties, headers=headers)
 
     # Validate wiki language
@@ -617,7 +555,7 @@ def main():
         return
 
     # If the destination wiki is already present, just append the origin to the existing entry
-    destination_base_url = destination_site_metadata["base url"]
+    destination_base_url = destination_site_metadata["base_url"]
     existing_destination_redirect = validate_destination_uniqueness(redirects_list, destination_base_url)
     if existing_destination_redirect is not None:
         destination_wiki_name = existing_destination_redirect["destination"]
@@ -654,7 +592,7 @@ def main():
         new_entry = generate_redirect_entry(origin_site_metadata, destination_site_metadata, entry_id)
 
         # Download the icon file
-        icon_url = destination_site_metadata["icon path"]
+        icon_url = destination_site_metadata["icon_path"]
         while icon_url is None or icon_url.strip() == "":
             icon_url = input("📥 Enter destination wiki icon path: ")
 

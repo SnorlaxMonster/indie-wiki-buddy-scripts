@@ -8,8 +8,14 @@ import time
 import requests
 from requests.exceptions import SSLError
 from io import BytesIO
-from typing import Optional, Generator
+from typing import Optional, Generator, Iterable
 from urllib.parse import urlparse, urlunparse, urljoin, ParseResult as UrlParseResult
+from enum import Enum
+
+
+class WikiSoftware(Enum):
+    MEDIAWIKI = 1
+    FEXTRALIFE = 2
 
 
 class MediaWikiAPIError(Exception):
@@ -46,7 +52,7 @@ def normalize_relative_url(relative_url: str | UrlParseResult, absolute_url: str
     if parsed_new_url.query != "":
         parsed_new_url = parsed_new_url._replace(query="")
 
-    return urlunparse(parsed_new_url)
+    return str(urlunparse(parsed_new_url))
 
 
 def normalize_url_protocol(url: str, default_protocol="https") -> str:
@@ -91,18 +97,7 @@ def normalize_wikia_url(original_url: str) -> str:
     new_path = urljoin(lang, parsed_url.path)
     parsed_url = parsed_url._replace(netloc=new_domain, path=new_path)
 
-    return urlunparse(parsed_url)
-
-
-def extract_hostname(url: str) -> str:
-    """
-    Extract the hostname (full domain name) of the specified URL.
-
-    :param url: URL
-    :return: Domain name
-    """
-    parsed_url = urlparse(url)
-    return parsed_url.hostname
+    return str(urlunparse(parsed_url))
 
 
 def request_with_http_fallback(raw_url: str, **kwargs) -> requests.Response:
@@ -129,6 +124,11 @@ def request_with_http_fallback(raw_url: str, **kwargs) -> requests.Response:
     return response
 
 
+def extract_mediawiki_version(generator_string: str) -> str:
+    match = re.match(r"MediaWiki (\d+\.\d+\.\d+)(?:\+.*)?", generator_string)
+    return match.group(1)
+
+
 def is_mediawiki(parsed_html: lxml.html.etree) -> bool:
     """
     Checks if the page is a MediaWiki page.
@@ -153,7 +153,13 @@ def is_mediawiki(parsed_html: lxml.html.etree) -> bool:
     return False
 
 
-def determine_wiki_software(response: Optional[requests.Response]) -> Optional[str]:
+def determine_wiki_software(response: Optional[requests.Response]) -> Optional[WikiSoftware]:
+    """
+    Determines what software the specified wiki is running
+
+    :param response: HTTP response for a wiki page
+    :return: Software the wiki runs on
+    """
     if not response:
         return None
 
@@ -162,9 +168,29 @@ def determine_wiki_software(response: Optional[requests.Response]) -> Optional[s
 
     # Check the wiki's software
     if is_mediawiki(parsed_html):
-        return "mediawiki"
+        return WikiSoftware.MEDIAWIKI
+    elif urlparse(response.url).hostname.endswith("fextralife.com"):
+        return WikiSoftware.FEXTRALIFE
     else:
         return None  # unable to determine the wiki's software
+
+
+def detect_wikifarm(url_list: Iterable[str]) -> Optional[str]:
+    """
+    If the site URL or logo URL contains the name of a wikifarm, assume the wiki is hosted on that wikifarm
+    Checking the logo URL should catch any wikis hosted on a wikifarm that use a custom URL
+
+    :param url_list: List of URLs to inspect for wikifarms
+    :return: Name of the site's wikifarm, if it is hosted by one
+    """
+    # This is only relevant for destinations, so "fandom" is not checked for (and it would likely give false positives)
+    known_wikifarms = {"shoutwiki", "wiki.gg", "miraheze", "wikitide"}
+
+    for wikifarm in known_wikifarms:
+        for url in url_list:
+            if wikifarm in url:
+                return wikifarm
+    return None
 
 
 def get_fandom_url_from_breezewiki(response: Optional[requests.Response]) -> Optional[str]:
@@ -193,7 +219,13 @@ def get_fandom_url_from_breezewiki(response: Optional[requests.Response]) -> Opt
         return None
 
 
-def get_favicon_url(response: Optional[requests.Response]) -> Optional[str]:
+def get_mediawiki_favicon_url(response: Optional[requests.Response]) -> Optional[str]:
+    """
+    Given an HTTP response for a MediaWiki page, determines the wiki's favicon's URL.
+
+    :param response: HTTP response for a wiki page
+    :return: Favicon URL
+    """
     if not response:
         return None
 
@@ -225,6 +257,11 @@ def get_mediawiki_api_url(wiki_page: str | requests.Response, headers: Optional[
     # If provided a URL, run an HTTP request
     if type(wiki_page) is str:
         url = wiki_page
+
+        # Check that the input URL isn't already an API URL
+        if url.endswith("/api.php"):
+            return url
+
         url = normalize_wikia_url(url)  # Normalize defunct Wikia URLs
         response = request_with_http_fallback(url, headers=headers)
         if not response:
@@ -355,3 +392,123 @@ def query_mediawiki_api_with_continue(api_url: str, params: dict, headers: Optio
             break
         last_continue = result['continue']
 
+
+def extract_metadata_from_siteinfo(siteinfo: dict) -> dict:
+    """
+    Extracts the important data from a siteinfo result, and transforms it into a standardized format
+
+    :param siteinfo: MediaWiki API response for a "siteinfo" query including siprop=general
+    :return: Standardized site properties
+    """
+    base_url = urlparse(siteinfo["general"]["base"]).hostname
+
+    # Retrieve normalized language
+    full_language = siteinfo["general"]["lang"]  # NOTE: The language retrieved this way may include the dialect
+    normalized_language = full_language.split('-')[0]
+
+    # For Fandom wikis, ensure the language is part of the base_url instead of the content_path
+    content_path = siteinfo["general"]["articlepath"].replace("$1", "")
+    if ".fandom.com" in base_url and normalized_language != "en":
+        full_path_parts = (base_url + content_path).split("/")
+        if full_path_parts[1] == normalized_language:
+            base_url = "/".join(full_path_parts[0:2])
+            content_path = "/" + "/".join(full_path_parts[2:])
+
+    # Apply standard wiki name changes
+    wiki_name = siteinfo["general"]["sitename"]
+    if ".fandom.com" in base_url:
+        wiki_name = wiki_name.replace(" Wiki", " Fandom Wiki")
+
+    # Detect if the wiki is on a wikifarm
+    logo_path = siteinfo["general"].get("logo", "")  # Not guaranteed to be present
+    wikifarm = detect_wikifarm([base_url, logo_path])
+
+    # Get favicon path
+    favicon_path = siteinfo["general"].get("favicon")  # Not guaranteed to be present
+    if favicon_path is not None and favicon_path.startswith("$"):
+        # On Fandom, the API's favicon URL path starts with $wgUploadPath. For now, just ignore these kinds of paths.
+        favicon_path = None
+
+    # Return extracted properties
+    wiki_metadata = {
+        # Basic information
+        "name": wiki_name,
+        "base_url": base_url,
+        "full_language": full_language,
+        "language": normalized_language,
+
+        # Technical data
+        "wiki_id": siteinfo["general"]["wikiid"],
+        "wikifarm": wikifarm,
+        "platform": "MediaWiki".lower(),
+        "software_version": extract_mediawiki_version(siteinfo["general"]["generator"]),
+
+        # Paths
+        "protocol": urlparse(siteinfo["general"]["base"]).scheme,
+        "main_page": siteinfo["general"]["mainpage"].replace(" ", "_"),
+        "content_path": content_path,
+        "search_path": siteinfo["general"]["script"],
+        "icon_path": favicon_path,
+
+        # Licensing
+        "licence_name": siteinfo["rightsinfo"]["text"] if "rightsinfo" in siteinfo else None,
+        "licence_page": siteinfo["rightsinfo"]["url"] if "rightsinfo" in siteinfo else None,
+    }
+
+    return wiki_metadata
+
+
+def extract_metadata_from_fextralife_page(response: requests.Response):
+    """
+    Extracts the important data from a Fextralife page, and transforms it into a standardized format
+
+    :param response: HTTP response for a Fextralife page
+    :return: Standardized site properties
+    """
+    page_html = lxml.html.parse(BytesIO(response.content))
+
+    # Extract language
+    language = page_html.find('.').get('lang')
+
+    # Extract the favicon URL
+    favicon_element = page_html.find('//link[@type="logos/x-icon"]')
+    if favicon_element is not None:
+        favicon_path = favicon_element.get('href')
+    else:
+        favicon_path = None
+
+    # Extract the wiki ID
+    wiki_id = None
+    pagex_script_matches = page_html.xpath("//script[contains(., 'pagex')]")
+    if len(pagex_script_matches) > 0:
+        pagex_script = pagex_script_matches[0].text
+        match = re.search(r"pagex\['wikiId'\] = '(.*)';", pagex_script)
+        if match:
+            wiki_id = match.group(1)
+
+    # Return extracted properties
+    wiki_metadata = {
+        # Basic information
+        "name": page_html.find('//title').text.split(" | ")[-1],
+        "base_url": urlparse(response.url).hostname,
+        "full_language": language,
+        "language": language,
+
+        # Technical data
+        "wiki_id": wiki_id,
+        "wikifarm": "Fextralife",
+        "platform": "Fextralife".lower(),
+        "software_version": None,  # N/A
+
+        # Paths
+        "protocol": urlparse(response.url).scheme,
+        "main_page": page_html.find('//a[@class="WikiLogo WikiElement"]').get("href").lstrip('/'),
+        "content_path": "/",
+        "search_path": None,  # Irrelevant
+        "icon_path": favicon_path,
+
+        # Licensing
+        "licence_name": "Fextralife Wiki Custom License",
+        "licence_page": "https://fextralife.com/wiki-license/",
+    }
+    return wiki_metadata
