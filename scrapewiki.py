@@ -124,55 +124,61 @@ def request_with_http_fallback(raw_url: str, **kwargs) -> requests.Response:
     return response
 
 
+def extract_xpath_property(parsed_html: lxml.html.etree, xpath: str, property_name: str):
+    """
+    Returns the value of a specific property of an element selected via XPath from an HTML document.
+    Returns None if the element does not exist, or if the element does not have the specified property
+
+    :param parsed_html: Parsed HTML
+    :param xpath: XPath uniquely identifying the HTML element to extract the property from
+    :param property_name: Name of the property to extract
+    :return: Software the wiki runs on
+    """
+    url_elem = parsed_html.find(xpath)
+    if url_elem is not None:
+        return url_elem.get(property_name)
+    else:
+        return None
+
+
 def extract_mediawiki_version(generator_string: str) -> str:
     match = re.match(r"MediaWiki (\d+\.\d+\.\d+)(?:\+.*)?", generator_string)
     return match.group(1)
 
 
-def is_mediawiki(parsed_html: lxml.html.etree) -> bool:
-    """
-    Checks if the page is a MediaWiki page.
-
-    :param parsed_html: LXML etree representation of the page's HTML
-    :return: Whether the page is a page from a MediaWiki site
-    """
-    # Most MediaWiki wikis include 'mediawiki' as a class on the <body> element
-    body_elem = parsed_html.find('body')
-    if body_elem is not None:
-        body_class = body_elem.get('class')
-        if body_class is not None:
-            if 'mediawiki' in body_class.split():
-                return True
-
-    # For wikis that lack this (e.g. Neoseeker's AdBird skin), they can still be identified by the content element
-    content_elem = parsed_html.find('//div[@id="mw-content-text"]/div[@class="mw-parser-output"]')
-    if content_elem is not None:
-        return True
-
-    # Otherwise, assume the site is not MediaWiki
-    return False
-
-
-def determine_wiki_software(response: Optional[requests.Response]) -> Optional[WikiSoftware]:
+def determine_wiki_software(parsed_html: lxml.html.etree) -> Optional[WikiSoftware]:
     """
     Determines what software the specified wiki is running
 
-    :param response: HTTP response for a wiki page
+    :param parsed_html: Parsed HTML for a wiki page
     :return: Software the wiki runs on
     """
-    if not response:
-        return None
+    # Check the generator meta element
+    generator = extract_xpath_property(parsed_html, '//meta[@name="generator"]', "content")
+    if generator is not None:
+        if generator.startswith("MediaWiki"):
+            return WikiSoftware.MEDIAWIKI
 
-    # Parse the HTML
-    parsed_html = lxml.html.parse(BytesIO(response.content))
+    # Check the wiki's URL via URL meta element
+    meta_url = extract_xpath_property(parsed_html, '//meta[@property="og:url"]', "content")
+    if meta_url is not None:
+        parsed_url = urlparse(meta_url)
+        if parsed_url.hostname.endswith("fextralife.com"):
+            return WikiSoftware.FEXTRALIFE
 
-    # Check the wiki's software
-    if is_mediawiki(parsed_html):
+    # Check the class on the body element (necessary for BreezeWiki)
+    body_class = extract_xpath_property(parsed_html, 'body', "class")
+    if body_class is not None:
+        if 'mediawiki' in body_class.split():
+            return WikiSoftware.MEDIAWIKI
+
+    # Check the content element (necessary for Neoseeker's AdBird skin)
+    content_elem = parsed_html.find('//div[@id="mw-content-text"]/div[@class="mw-parser-output"]')
+    if content_elem is not None:
         return WikiSoftware.MEDIAWIKI
-    elif urlparse(response.url).hostname.endswith("fextralife.com"):
-        return WikiSoftware.FEXTRALIFE
-    else:
-        return None  # unable to determine the wiki's software
+
+    # Unable to determine the wiki's software
+    return None
 
 
 def detect_wikifarm(url_list: Iterable[str]) -> Optional[str]:
@@ -219,18 +225,13 @@ def get_fandom_url_from_breezewiki(response: Optional[requests.Response]) -> Opt
         return None
 
 
-def get_mediawiki_favicon_url(response: Optional[requests.Response]) -> Optional[str]:
+def get_mediawiki_favicon_url(parsed_html: lxml.html.etree) -> Optional[str]:
     """
     Given an HTTP response for a MediaWiki page, determines the wiki's favicon's URL.
 
-    :param response: HTTP response for a wiki page
+    :param parsed_html: Parsed HTML for a wiki page
     :return: Favicon URL
     """
-    if not response:
-        return None
-
-    parsed_html = lxml.html.parse(BytesIO(response.content))
-
     # Find the icon element in the HTML
     icon_link_element = parsed_html.find('//link[@rel="shortcut icon"]')
     if icon_link_element is None:
@@ -243,7 +244,10 @@ def get_mediawiki_favicon_url(response: Optional[requests.Response]) -> Optional
     if icon_url is None:
         return None
 
-    return normalize_relative_url(icon_url, response.url)
+    # Retrieve the page's URL
+    page_url = extract_xpath_property(parsed_html, '//meta[@property="og:url"]', "content")
+
+    return normalize_relative_url(icon_url, page_url)
 
 
 def get_mediawiki_api_url(wiki_page: str | requests.Response, headers: Optional[dict] = None) -> Optional[str]:
@@ -273,21 +277,19 @@ def get_mediawiki_api_url(wiki_page: str | requests.Response, headers: Optional[
     parsed_html = lxml.html.parse(BytesIO(response.content))
 
     # If the site is not a MediaWiki wiki, abort trying to determine the API URL
-    if not is_mediawiki(parsed_html):
+    wiki_software = determine_wiki_software(parsed_html)
+    if wiki_software != WikiSoftware.MEDIAWIKI:
         print(f"⚠ {response.url} is not a MediaWiki page")
         return None
 
     # Retrieve the API URL via EditURI element
-    edit_uri_node = parsed_html.find('/head/link[@rel="EditURI"]')
-    if edit_uri_node is not None:
-        api_url = edit_uri_node.get('href')
-
+    api_url = extract_xpath_property(parsed_html, '/head/link[@rel="EditURI"]', "href")
+    if api_url is not None:
         return normalize_relative_url(api_url, response.url)
 
     # If EditURI is missing, try to find the searchform element and determine the API URL from that
-    searchform_node = parsed_html.find('//form[@id="searchform"]')
-    if searchform_node is not None:
-        searchform_node_url = searchform_node.get("action")
+    searchform_node_url = extract_xpath_property(parsed_html, '//form[@id="searchform"]', "action")
+    if searchform_node_url is not None:
         if searchform_node_url.endswith('index.php'):
             print(f"ℹ Retrieved API URL for {response.url} via searchform node")
             api_url = searchform_node_url.replace('index.php', 'api.php')
@@ -295,12 +297,11 @@ def get_mediawiki_api_url(wiki_page: str | requests.Response, headers: Optional[
             return normalize_relative_url(api_url, response.url)
 
     # If EditURI is missing, try to find the permalink URL and determine the API URL from that
-    permalink_node = parsed_html.find('//li[@id="t-permalink"]/a')
-    if permalink_node is not None:
-        permalink_node_url = permalink_node.get("href")
-        if permalink_node_url.endswith('index.php'):
+    permalink_url = extract_xpath_property(parsed_html, '//li[@id="t-permalink"]/a', "href")
+    if permalink_url is not None:
+        if permalink_url.endswith('index.php'):
             print(f"ℹ Retrieved API URL for {response.url} via permalink node")
-            api_url = permalink_node_url.replace('index.php', 'api.php')
+            api_url = permalink_url.replace('index.php', 'api.php')
 
             return normalize_relative_url(api_url, response.url)
 
@@ -468,14 +469,10 @@ def extract_metadata_from_fextralife_page(response: requests.Response):
     page_html = lxml.html.parse(BytesIO(response.content))
 
     # Extract language
-    language = page_html.find('.').get('lang')
+    language = page_html.getroot().get('lang')
 
     # Extract the favicon URL
-    favicon_element = page_html.find('//link[@type="logos/x-icon"]')
-    if favicon_element is not None:
-        favicon_path = favicon_element.get('href')
-    else:
-        favicon_path = None
+    favicon_path = extract_xpath_property(page_html, '//link[@type="logos/x-icon"]', "href")
 
     # Extract the wiki ID
     wiki_id = None
@@ -502,7 +499,7 @@ def extract_metadata_from_fextralife_page(response: requests.Response):
 
         # Paths
         "protocol": urlparse(response.url).scheme,
-        "main_page": page_html.find('//a[@class="WikiLogo WikiElement"]').get("href").lstrip('/'),
+        "main_page": page_html.find('//a[@class="WikiLogo WikiElement"]').get("href").removeprefix('/'),
         "content_path": "/",
         "search_path": None,  # Irrelevant
         "icon_path": favicon_path,

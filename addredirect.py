@@ -6,7 +6,8 @@ import json
 import os
 import unicodedata
 import requests
-from urllib.parse import urlparse, urlunparse
+import lxml.html
+from urllib.parse import urlparse
 from requests.exceptions import HTTPError, SSLError
 from io import BytesIO
 from typing import Optional, Iterable
@@ -429,16 +430,21 @@ def get_wiki_metadata_cli(site_class: str, key_properties: Iterable, headers: Op
     wiki_url = ""
     while wiki_url.strip() == "":
         wiki_url = input(f"📥 Enter {site_class} wiki URL: ")
-    response = request_with_http_fallback(wiki_url, headers=headers)
+    try:
+        response = request_with_http_fallback(wiki_url, headers=headers)
+    except (SSLError, ConnectionError) as e:
+        print(e)
+        response = None
 
     wiki_data = {}
-    auto_properties = []  # Properties that have been added automatically (i.e. that the user may want to edit)
 
     if not response:
-        print(f"⚠ Unable to connect to {wiki_url} . Details will need to be entered manually.")
+        print(f"⚠ Unable to connect to {wiki_url} (Error {response.status_code}: {response.reason}). "
+              f"Details will need to be entered manually.")
     else:
         # Check wiki software
-        wiki_software = determine_wiki_software(response)
+        parsed_html = lxml.html.parse(BytesIO(response.content))
+        wiki_software = determine_wiki_software(parsed_html)
 
         # For MediaWiki wikis, retrieve details via the API
         if wiki_software == WikiSoftware.MEDIAWIKI:
@@ -458,7 +464,7 @@ def get_wiki_metadata_cli(site_class: str, key_properties: Iterable, headers: Op
             if "icon_path" in key_properties:
                 icon_path = wiki_data.get("icon_path")
                 if icon_path is None:
-                    wiki_data["icon_path"] = get_mediawiki_favicon_url(response)
+                    wiki_data["icon_path"] = get_mediawiki_favicon_url(parsed_html)
 
         elif wiki_software == WikiSoftware.FEXTRALIFE:
             print(f"ℹ Detected Fextralife software")
@@ -469,6 +475,7 @@ def get_wiki_metadata_cli(site_class: str, key_properties: Iterable, headers: Op
             print(f"⚠ {wiki_url} uses currently unsupported software. Details will need to be entered manually.")
 
     # Check all key properties. Print retrieved ones, require manual entry of missing ones.
+    auto_properties = []  # Properties that have been added automatically (i.e. that the user may want to edit)
     for prop in key_properties:
         current_value = wiki_data.get(prop)
         if current_value is not None:

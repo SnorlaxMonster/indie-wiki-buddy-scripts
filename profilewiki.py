@@ -7,9 +7,10 @@ import requests
 import json
 import lxml.etree
 import lxml.html
+from io import BytesIO
 from requests.exceptions import HTTPError, SSLError
 from urllib.parse import urlparse, urlunparse, urljoin, quote as urllib_quote
-from typing import Optional
+from typing import Optional, Callable
 
 from scrapewiki import (get_mediawiki_api_url, query_mediawiki_api, query_mediawiki_api_with_continue,
                         extract_metadata_from_siteinfo, extract_metadata_from_fextralife_page, determine_wiki_software,
@@ -34,42 +35,6 @@ def retrieve_fextralife_sitemap(base_url: str, headers: Optional[dict] = None) -
     parsed_sitemap = lxml.etree.fromstring(response.content)
 
     return parsed_sitemap
-
-
-def compose_fextralife_recentchanges_url(base_url: str, offset: int) -> str:
-    """
-    Builds a Fextralife Recent Changes API URL for a specified offset.
-
-    This function builds all the API parameters, despite only ever varying the offset.
-    This is mostly just to document the RC API URL structure in case other parameters need to be varied in the future.
-
-    :param base_url: Fextralife wiki domain (including protocol, excluding a path)
-    :param offset: Recent Changes offset
-    :return: Fextralife Recent Changes API URL
-    """
-
-    # Prepare other arguments
-    author_filter = urllib_quote("{none}")
-    date_filter = urllib_quote("{none}")
-
-    # Prepare param flags
-    param_flags = [
-        False,  # (always False; named 'isIP')
-        True,  # Include actions on Pages
-        False,  # (always False)
-        True,  # Include actions on Templates
-        False,  # Include forum activity
-        True,  # Include actions on Files
-        False,  # (always False)
-        False,  # Include unregistered users (defaults to all users if neither flag is True)
-        True,  # Include registered users (defaults to all users if neither flag is True)
-    ]
-    param_flags_string = '|'.join([str(int(flag)) for flag in param_flags])
-
-    # Construct URL
-    url_path = f"/ws/wikichangemanager/wiki/changes/{offset}/{author_filter}/{date_filter}/{param_flags_string}"
-    url = urljoin(base_url, url_path)
-    return url
 
 
 def retrieve_mediawiki_recentchanges(api_url: str, window_end: datetime.datetime, extra_params: Optional[dict] = None,
@@ -104,6 +69,50 @@ def retrieve_mediawiki_recentchanges(api_url: str, window_end: datetime.datetime
     return rc_df
 
 
+def retrieve_segmented_recentchanges(base_url: str, window_end: datetime.datetime,
+                                     url_constructor: Callable[[str, int], str],
+                                     rc_parser: Callable[[requests.Response], pd.DataFrame],
+                                     offset_increment: int = 1, timestamp_col: str = "timestamp",
+                                     headers: Optional[dict] = None) -> pd.DataFrame:
+    """
+    Retrieve paginated Recent Changes.
+
+    Results outside the window will typically be included at the end of the table.
+    They are not filtered out in order to allow checking the most recent edit's timestamp, even if it is outside the
+    window.
+
+    :param base_url: Base URL for the url_constructor function
+    :param window_end: Date of the earliest Recent Changes entry to include
+    :param url_constructor: Function that takes the base_url and offset, and outputs the corresponding RC page's URL
+    :param rc_parser: Function that takes the RC HTTP response and returns the RC as a DataFrame
+    :param offset_increment: Value to increase the offset by each iteration
+    :param timestamp_col: Column containing the timestamp
+    :param headers: Headers to include in HTTP requests (e.g. user-agent)
+    :return: DataFrame of Recent Changes
+    """
+    rc_fragments = []
+    offset = 0
+    earliest_timestamp = datetime.datetime.now()
+    while earliest_timestamp >= window_end:
+        # Request next page of Recent Changes
+        rc_page_url = url_constructor(base_url, offset)
+        response = requests.get(rc_page_url, headers=headers)
+        if not response:
+            response.raise_for_status()
+
+        # Parse response
+        rc_fragment_df = rc_parser(response)
+        rc_fragments.append(rc_fragment_df)
+
+        # Update loop variables
+        earliest_timestamp = rc_fragment_df[timestamp_col].min()
+        offset += offset_increment
+
+    rc_df = pd.concat(rc_fragments)
+
+    return rc_df
+
+
 def retrieve_fextralife_recentchanges(base_url: str, window_end: datetime.datetime,
                                       headers: Optional[dict] = None) -> pd.DataFrame:
     """
@@ -118,26 +127,41 @@ def retrieve_fextralife_recentchanges(base_url: str, window_end: datetime.dateti
     :param headers: Headers to include in HTTP requests (e.g. user-agent)
     :return: DataFrame of Recent Changes
     """
-    rc_fragments = []
-    offset = 0
-    earliest_timestamp = datetime.datetime.now()
-    while earliest_timestamp >= window_end:
-        # API request
-        fextralife_rc_url = compose_fextralife_recentchanges_url(base_url, offset)
-        response = requests.get(fextralife_rc_url, headers=headers)
-        if not response:
-            response.raise_for_status()
-
-        # Parse response
+    def parse_fextralife_recentchanges(response: requests.Response) -> pd.DataFrame:
         rc_fragment_df = pd.DataFrame(response.json()).set_index('id')
         rc_fragment_df["date"] = rc_fragment_df["date"].astype('datetime64[ms]')
-        rc_fragments.append(rc_fragment_df)
+        return rc_fragment_df
 
-        # Update loop variables
-        earliest_timestamp = rc_fragment_df["date"].min()
-        offset += 1
+    def compose_fextralife_recentchanges_url(rc_base_url: str, offset: int) -> str:
+        """
+        This function builds all the API parameters, despite only ever varying the offset, mostly just to document the
+        RC API URL structure in case other parameters need to be varied in the future.
+        """
+        # Prepare other arguments
+        author_filter = urllib_quote("{none}")
+        date_filter = urllib_quote("{none}")
 
-    rc_df = pd.concat(rc_fragments)
+        # Prepare param flags
+        param_flags = [
+            False,  # (always False; named 'isIP')
+            True,  # Include actions on Pages
+            False,  # (always False)
+            True,  # Include actions on Templates
+            False,  # Include forum activity
+            True,  # Include actions on Files
+            False,  # (always False)
+            False,  # Include unregistered users (defaults to all users if neither flag is True)
+            True,  # Include registered users (defaults to all users if neither flag is True)
+        ]
+        param_flags_string = '|'.join([str(int(flag)) for flag in param_flags])
+
+        # Construct URL
+        url_path = f"/ws/wikichangemanager/wiki/changes/{offset}/{author_filter}/{date_filter}/{param_flags_string}"
+        url = urljoin(rc_base_url, url_path)
+        return url
+
+    rc_df = retrieve_segmented_recentchanges(base_url, window_end, compose_fextralife_recentchanges_url,
+                                             parse_fextralife_recentchanges, timestamp_col="date", headers=headers)
 
     # Drop duplicated RC entries (duplicates can occur if edits are made between GET requests)
     rc_df = rc_df[~rc_df.index.duplicated(keep='first')]
@@ -305,7 +329,8 @@ def profile_wiki(wiki_url: str, full_profile: bool = True, headers: Optional[dic
         response.raise_for_status()
 
     # Detect wiki software
-    wiki_software = determine_wiki_software(response)
+    parsed_html = lxml.html.parse(BytesIO(response.content))
+    wiki_software = determine_wiki_software(parsed_html)
 
     # Select profiler based on software
     if wiki_software == WikiSoftware.MEDIAWIKI:
@@ -340,7 +365,8 @@ def main():
         print(e)
         return
 
-    wiki_software = determine_wiki_software(response)
+    html_tree = lxml.html.parse(BytesIO(response.content))
+    wiki_software = determine_wiki_software(html_tree)
 
     if wiki_software == WikiSoftware.MEDIAWIKI:
         print(f"ℹ Detected MediaWiki software")
