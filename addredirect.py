@@ -1,22 +1,23 @@
 """
 Python script for adding a new wiki redirect
 """
-import re
 import json
-import os
-import unicodedata
-import requests
 import lxml.html
+import os
+import re
+import requests
+import unicodedata
+from io import BytesIO
+from PIL import Image
 from urllib.parse import urlparse
 from requests.exceptions import HTTPError, SSLError
-from io import BytesIO
 from typing import Optional, Iterable
-from PIL import Image
 
-from scrapewiki import (normalize_url_protocol, get_mediawiki_api_url, query_mediawiki_api, get_mediawiki_favicon_url,
-                        extract_metadata_from_siteinfo, extract_metadata_from_fextralife_page, determine_wiki_software,
-                        request_with_http_fallback, WikiSoftware, MediaWikiAPIError)
-from profilewiki import profile_wiki
+from scrapewiki import (normalize_url_protocol, request_with_http_fallback, WikiSoftware)
+from mediawiki_tools import (get_mediawiki_api_url, query_mediawiki_api, get_mediawiki_favicon_url,
+                             extract_metadata_from_siteinfo, MediaWikiAPIError)
+from fextralife_tools import extract_metadata_from_fextralife_page
+from profilewiki import profile_wiki, determine_wiki_software
 
 
 def extract_topic_from_url(wiki_url: str) -> str:
