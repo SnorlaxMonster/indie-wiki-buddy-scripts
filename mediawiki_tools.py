@@ -13,11 +13,14 @@ from io import BytesIO
 from typing import Optional, Generator
 from urllib.parse import urlparse, urlunparse, urljoin
 
-from scrapewiki import (extract_xpath_property, normalize_relative_url, normalize_url_protocol,
+from scrapewiki import (extract_xpath_property, ensure_absolute_url, normalize_url_protocol,
                         request_with_http_fallback, detect_wikifarm)
 
 
 class MediaWikiAPIError(Exception):
+    """
+    Errors returned by the MediaWiki API
+    """
     pass
 
 
@@ -77,7 +80,7 @@ def get_mediawiki_favicon_url(parsed_html: lxml.html.etree) -> Optional[str]:
     # Retrieve the page's URL
     page_url = extract_xpath_property(parsed_html, '//meta[@property="og:url"]', "content")
 
-    return normalize_relative_url(icon_url, page_url)
+    return ensure_absolute_url(icon_url, page_url)
 
 
 def get_mediawiki_api_url(wiki_page: str | requests.Response, headers: Optional[dict] = None) -> Optional[str]:
@@ -108,7 +111,9 @@ def get_mediawiki_api_url(wiki_page: str | requests.Response, headers: Optional[
     # Retrieve the API URL via EditURI element
     api_url = extract_xpath_property(parsed_html, '/head/link[@rel="EditURI"]', "href")
     if api_url is not None:
-        return normalize_relative_url(api_url, response.url)
+        # Delete the query from the API URL (usually this element's API URL includes '?action=rsd')
+        api_url = urlparse(api_url)._replace(query="").geturl()
+        return ensure_absolute_url(api_url, response.url)
 
     # If EditURI is missing, try to find the searchform element and determine the API URL from that
     searchform_node_url = extract_xpath_property(parsed_html, '//form[@id="searchform"]', "action")
@@ -117,7 +122,7 @@ def get_mediawiki_api_url(wiki_page: str | requests.Response, headers: Optional[
             print(f"ℹ Retrieved API URL for {response.url} via searchform node")
             api_url = searchform_node_url.replace('index.php', 'api.php')
 
-            return normalize_relative_url(api_url, response.url)
+            return ensure_absolute_url(api_url, response.url)
 
     # If EditURI is missing, try to find the permalink URL and determine the API URL from that
     permalink_url = extract_xpath_property(parsed_html, '//li[@id="t-permalink"]/a', "href")
@@ -125,8 +130,9 @@ def get_mediawiki_api_url(wiki_page: str | requests.Response, headers: Optional[
         if permalink_url.endswith('index.php'):
             print(f"ℹ Retrieved API URL for {response.url} via permalink node")
             api_url = permalink_url.replace('index.php', 'api.php')
+            api_url = urlparse(api_url)._replace(query="").geturl()
 
-            return normalize_relative_url(api_url, response.url)
+            return ensure_absolute_url(api_url, response.url)
 
     # If the page is a BreezeWiki page, identify the original Fandom URL and retrieve the API URL from Fandom
     if ".fandom.com" not in response.url:
@@ -391,18 +397,26 @@ def profile_mediawiki_recentchanges(api_url: str, rc_days_limit: int, siteinfo: 
     return edit_count, latest_edit_timestamp
 
 
-def profile_mediawiki_wiki(api_url: str, full_profile: bool = True,
+def profile_mediawiki_wiki(wiki_url: str, full_profile: bool = True,
                            rc_days_limit: int = 30, headers: Optional[dict] = None) -> dict:
     """
     Uses the MediaWiki API to retrieve key information about the specified MediaWiki site,
     including content and activity metrics.
 
-    :param api_url: MediaWiki API URL
+    :param wiki_url: URL for a page on the MediaWiki wiki, or the API URL of the MediaWiki wiki
     :param full_profile: Whether to include activity and content metrics
     :param rc_days_limit: The number of days to look back when retrieving Recent Changes
     :param headers: Headers to include in HTTP requests (e.g. user-agent)
     :return: JSON-serializable dict of wiki metadata in standardized format
     """
+    # If the provided URL is not an API URL, determine the MediaWiki API URL
+    if wiki_url.endswith("/api.php"):
+        api_url = wiki_url
+    else:
+        api_url = get_mediawiki_api_url(wiki_url, headers=headers)
+        if api_url is None:
+            raise MediaWikiAPIError("Unable to determine MediaWiki API URL")
+
     # Request siteinfo data
     siteinfo_params = {'format': 'json', 'action': 'query', 'meta': 'siteinfo',
                        'siprop': 'general|namespaces|statistics|rightsinfo'}

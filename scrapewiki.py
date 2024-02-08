@@ -12,6 +12,7 @@ from urllib.parse import urlparse, urlunparse, ParseResult as UrlParseResult
 class WikiSoftware(Enum):
     MEDIAWIKI = 1
     FEXTRALIFE = 2
+    DOKUWIKI = 3
 
 
 def extract_base_url(input_url):
@@ -19,26 +20,25 @@ def extract_base_url(input_url):
     return urlunparse((parsed_input_url.scheme, parsed_input_url.netloc, '', '', '', ''))
 
 
-def normalize_relative_url(relative_url: str | UrlParseResult, absolute_url: str | UrlParseResult) -> str:
+def ensure_absolute_url(subject_url: str | UrlParseResult, donor_url: str | UrlParseResult) -> str:
     """
-    Ensures that a URL includes the protocol and domain name, and does not include a query.
-    For example, if the input URL is "/w/api.php?action=rsd", adds the protocol and domain name to the URL,
-    and deletes action=rsd.
+    Ensures that a URL includes the protocol and domain name, copying them from the donor URL if missing from the
+    subject URL. If they are already provided, leaves those properties unmodified.
 
-    :param relative_url: URL to be normalized
-    :param absolute_url: URL to use to fill in gaps in the first URL
-    :return: Normalized API URL
+    :param subject_url: URL to be filled in
+    :param donor_url: URL to use to fill in gaps in the subject URL
+    :return: Absolute version of the subject URL
     """
     # Parse URLs, if not already parsed
-    if type(relative_url) is str:
-        parsed_relative_url = urlparse(relative_url)
+    if type(subject_url) is str:
+        parsed_relative_url = urlparse(subject_url)
     else:
-        parsed_relative_url = relative_url
+        parsed_relative_url = subject_url
 
-    if type(absolute_url) is str:
-        parsed_absolute_url = urlparse(absolute_url)
+    if type(donor_url) is str:
+        parsed_absolute_url = urlparse(donor_url)
     else:
-        parsed_absolute_url = absolute_url
+        parsed_absolute_url = donor_url
 
     # Construct a new URL
     parsed_new_url = parsed_relative_url
@@ -46,10 +46,8 @@ def normalize_relative_url(relative_url: str | UrlParseResult, absolute_url: str
         parsed_new_url = parsed_new_url._replace(netloc=parsed_absolute_url.netloc)
     if parsed_new_url.scheme == "":
         parsed_new_url = parsed_new_url._replace(scheme=parsed_absolute_url.scheme)
-    if parsed_new_url.query != "":
-        parsed_new_url = parsed_new_url._replace(query="")
 
-    return str(urlunparse(parsed_new_url))
+    return parsed_new_url.geturl()
 
 
 def normalize_url_protocol(url: str, default_protocol="https") -> str:
@@ -84,10 +82,13 @@ def request_with_http_fallback(raw_url: str, **kwargs) -> requests.Response:
         response = requests.get(url, **kwargs)
 
     # If using HTTPS results in an SSLError, try HTTP instead
-    except SSLError and parsed_url.scheme != "http":
-        print(f"⚠ SSLError for {raw_url} . Defaulting to HTTP connection.")
-        url = urlunparse(parsed_url._replace(scheme="http"))
-        response = requests.get(url, **kwargs)
+    except SSLError as e:
+        if parsed_url.scheme != "http":
+            print(f"⚠ SSLError for {raw_url} . Defaulting to HTTP connection.")
+            url = urlunparse(parsed_url._replace(scheme="http"))
+            response = requests.get(url, **kwargs)
+        else:
+            raise e
 
     return response
 

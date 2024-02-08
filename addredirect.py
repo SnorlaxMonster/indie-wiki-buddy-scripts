@@ -17,6 +17,7 @@ from scrapewiki import (normalize_url_protocol, request_with_http_fallback, Wiki
 from mediawiki_tools import (get_mediawiki_api_url, query_mediawiki_api, get_mediawiki_favicon_url,
                              extract_metadata_from_siteinfo, MediaWikiAPIError)
 from fextralife_tools import extract_metadata_from_fextralife_page
+from dokuwiki_tools import profile_dokuwiki_wiki
 from profilewiki import profile_wiki, determine_wiki_software
 
 
@@ -118,7 +119,7 @@ def generate_redirect_entry(origin_site_metadata: dict, destination_site_metadat
         "origins": [origin_entry],
         "destination": destination_site_metadata["name"],
         "destination_base_url": destination_site_metadata["base_url"],
-        "destination_platform": "mediawiki",
+        "destination_platform": destination_site_metadata["platform"],
         "destination_icon": None,  # Filename cannot be determined at this time. Populate it when the icon is added.
         "destination_main_page": destination_site_metadata["main_page"],
         "destination_search_path": destination_site_metadata["search_path"],
@@ -471,6 +472,11 @@ def get_wiki_metadata_cli(site_class: str, key_properties: Iterable, headers: Op
             print(f"ℹ Detected Fextralife software")
             print(f"🕑 Getting {site_class} wiki info...")
             wiki_data = extract_metadata_from_fextralife_page(response)
+
+        elif wiki_software == WikiSoftware.DOKUWIKI:
+            print(f"ℹ Detected DokuWiki software")
+            print(f"🕑 Getting {site_class} wiki info...")
+            wiki_data = profile_dokuwiki_wiki(response.url, full_profile=False, headers=headers)
 
         else:
             print(f"⚠ {wiki_url} uses currently unsupported software. Details will need to be entered manually.")

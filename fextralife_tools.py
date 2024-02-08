@@ -11,7 +11,7 @@ from urllib.parse import urlparse, urlunparse, urljoin, quote as urllib_quote
 from scrapewiki import extract_xpath_property
 
 
-def extract_metadata_from_fextralife_page(response: requests.Response):
+def extract_metadata_from_fextralife_page(response: requests.Response) -> dict:
     """
     Extracts the important data from a Fextralife page, and transforms it into a standardized format
 

@@ -8,6 +8,7 @@ from urllib.parse import urlparse, urlunparse
 from scrapewiki import normalize_url_protocol, request_with_http_fallback, extract_xpath_property, WikiSoftware
 from mediawiki_tools import get_mediawiki_api_url, profile_mediawiki_wiki, normalize_wikia_url, MediaWikiAPIError
 from fextralife_tools import profile_fextralife_wiki
+from dokuwiki_tools import profile_dokuwiki_wiki
 
 
 def determine_wiki_software(parsed_html: lxml.html.etree) -> Optional[WikiSoftware]:
@@ -22,6 +23,8 @@ def determine_wiki_software(parsed_html: lxml.html.etree) -> Optional[WikiSoftwa
     if generator is not None:
         if generator.startswith("MediaWiki"):
             return WikiSoftware.MEDIAWIKI
+        elif generator == "DokuWiki":
+            return WikiSoftware.DOKUWIKI
 
     # Check the wiki's URL via URL meta element
     meta_url = extract_xpath_property(parsed_html, '//meta[@property="og:url"]', "content")
@@ -68,16 +71,11 @@ def profile_wiki(wiki_url: str, full_profile: bool = True, headers: Optional[dic
 
     # Select profiler based on software
     if wiki_software == WikiSoftware.MEDIAWIKI:
-        api_url = get_mediawiki_api_url(wiki_url, headers=headers)
-        if api_url is None:
-            return None
-        wiki_metadata = profile_mediawiki_wiki(api_url, full_profile=full_profile, headers=headers)
-        return wiki_metadata
-
+        return profile_mediawiki_wiki(wiki_url, full_profile=full_profile, headers=headers)
     elif wiki_software == WikiSoftware.FEXTRALIFE:
-        wiki_metadata = profile_fextralife_wiki(wiki_url, full_profile=full_profile, headers=headers)
-        return wiki_metadata
-
+        return profile_fextralife_wiki(wiki_url, full_profile=full_profile, headers=headers)
+    elif wiki_software == WikiSoftware.DOKUWIKI:
+        return profile_dokuwiki_wiki(wiki_url, full_profile=full_profile, headers=headers)
     else:
         return None
 
@@ -127,6 +125,22 @@ def main():
         print(f"🕑 Submitting queries to {base_url}")
         try:
             wiki_metadata = profile_fextralife_wiki(response, full_profile=True, rc_days_limit=30, headers=headers)
+        except (HTTPError, ConnectionError, SSLError, MediaWikiAPIError) as e:
+            print(e)
+            return
+
+    elif wiki_software == WikiSoftware.DOKUWIKI:
+        print(f"ℹ Detected DokuWiki software")
+        print("⚠ NOTICE: DokuWiki's Recent Changes only include the latest edit to each page, \n"
+              "restricting the ability to calculate DokuWiki activity metrics comparably to other wikis. \n"
+              "The active user count will miss users who are not the most recent editor on any page, \n"
+              "and the recent edit count is instead the number of distinct pages that have been edited recently.")
+
+        # Retrieve wiki metadata
+        base_url = urlunparse(urlparse(wiki_url)._replace(path=""))
+        print(f"🕑 Submitting queries to {base_url}")
+        try:
+            wiki_metadata = profile_dokuwiki_wiki(response, full_profile=True, rc_days_limit=30, headers=headers)
         except (HTTPError, ConnectionError, SSLError, MediaWikiAPIError) as e:
             print(e)
             return
