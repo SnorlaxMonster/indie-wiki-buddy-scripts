@@ -13,7 +13,7 @@ from urllib.parse import urlparse
 from requests.exceptions import HTTPError, SSLError
 from typing import Optional, Iterable
 
-from scrapewiki import (normalize_url_protocol, request_with_http_fallback, WikiSoftware)
+from utils import normalize_url_protocol, request_with_http_fallback, WikiSoftware, read_user_config, update_user_config
 from mediawiki_tools import (get_mediawiki_api_url, query_mediawiki_api, get_mediawiki_favicon_url,
                              extract_metadata_from_siteinfo, MediaWikiAPIError)
 from fextralife_tools import extract_metadata_from_fextralife_page
@@ -392,27 +392,26 @@ def get_iwb_filepath() -> str:
 
     :return: Filepath to Indie Wiki Buddy data
     """
-
-    # If iwb_path.txt is defined, use that as the path to the IWB folder
-    if os.path.isfile("iwb_path.txt"):
-        with open("iwb_path.txt", "r", encoding="utf-8") as file:
-            iwb_filepath = file.read()
-            print(f"ℹ Using saved indie-wiki-buddy repo filepath {iwb_filepath}")
+    # If iwb_filepath is defined in the user_config, use that as the path to the IWB folder
+    iwb_filepath = read_user_config("iwb_filepath")
+    if iwb_filepath is not None:
+        print(f"ℹ Using indie-wiki-buddy repo filepath from user config file: {iwb_filepath}")
+        return iwb_filepath
 
     # If the script is being run from the IWB folder, detect that and use the current folder as the filepath
-    elif os.path.isfile("./data/sitesEN.json"):
+    if os.path.isfile("./data/sitesEN.json"):
         iwb_filepath = "."
-        print(f"ℹ Detected script as being run from the indie-wiki-buddy repo")
+        if iwb_filepath is not None:
+            print(f"ℹ Detected script as being run from the indie-wiki-buddy repo directory")
+            return iwb_filepath
 
     # Otherwise, request the user specify the filepath
-    else:
-        print("⚠ Unable to find path to indie-wiki-buddy repo!")
-        iwb_filepath = input(f"📥 Enter path to indie-wiki-buddy repo: ")
-        with open("iwb_path.txt", "w", encoding="utf-8") as file:
-            file.write(iwb_filepath)
-        user_choice = confirm_yes_no("❔ Save filepath for future use (Y/N)?: ")
-        if user_choice:
-            print(f"💾 Saved path to iwb_path.txt! It will be used next time you run the script!")
+    print("⚠ Unable to find path to indie-wiki-buddy repo!")
+    iwb_filepath = input(f"📥 Enter path to indie-wiki-buddy repo: ")
+    user_choice = confirm_yes_no("❔ Save filepath for future use (Y/N)?: ")
+    if user_choice:
+        update_user_config("iwb_filepath", iwb_filepath)
+        print(f"💾 Saved path to user config file! It will be used next time you run the script!")
 
     return iwb_filepath
 
@@ -476,7 +475,7 @@ def get_wiki_metadata_cli(site_class: str, key_properties: Iterable, headers: Op
         elif wiki_software == WikiSoftware.DOKUWIKI:
             print(f"ℹ Detected DokuWiki software")
             print(f"🕑 Getting {site_class} wiki info...")
-            wiki_data = profile_dokuwiki_wiki(response.url, full_profile=False, headers=headers)
+            wiki_data = profile_dokuwiki_wiki(response, full_profile=False, headers=headers)
 
         else:
             print(f"⚠ {wiki_url} uses currently unsupported software. Details will need to be entered manually.")
@@ -532,7 +531,8 @@ def main():
     """
     Interactive CLI for adding new wikis one at a time
     """
-    headers = {'User-Agent': 'Mozilla/5.0'}
+    # Get User-Agent from user config file (case-sensitive key, unlike the HTTP header)
+    headers = {'User-Agent': read_user_config("User-Agent")}
 
     # Get IWB filepath
     iwb_filepath = get_iwb_filepath()

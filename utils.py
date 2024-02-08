@@ -1,12 +1,16 @@
 """
 Python script for scraping metadata from wikis
 """
+import json
 import lxml.html
+import os
 import requests
 from enum import Enum
 from requests.exceptions import SSLError
 from typing import Optional, Iterable
 from urllib.parse import urlparse, urlunparse, ParseResult as UrlParseResult
+
+USER_CONFIG_PATH = "user_config.json"
 
 
 class WikiSoftware(Enum):
@@ -30,12 +34,12 @@ def ensure_absolute_url(subject_url: str | UrlParseResult, donor_url: str | UrlP
     :return: Absolute version of the subject URL
     """
     # Parse URLs, if not already parsed
-    if type(subject_url) is str:
+    if isinstance(subject_url, str):
         parsed_relative_url = urlparse(subject_url)
     else:
         parsed_relative_url = subject_url
 
-    if type(donor_url) is str:
+    if isinstance(donor_url, str):
         parsed_absolute_url = urlparse(donor_url)
     else:
         parsed_absolute_url = donor_url
@@ -112,8 +116,8 @@ def extract_xpath_property(parsed_html: lxml.html.etree, xpath: str, property_na
 
 def detect_wikifarm(url_list: Iterable[str]) -> Optional[str]:
     """
-    If the site URL or logo URL contains the name of a wikifarm, assume the wiki is hosted on that wikifarm
-    Checking the logo URL should catch any wikis hosted on a wikifarm that use a custom URL
+    If the site URL or logo URL contains the name of a wikifarm, assume the wiki is hosted on that wikifarm.
+    Checking the logo URL should catch any wikis hosted on a wikifarm that use a custom URL.
 
     :param url_list: List of URLs to inspect for wikifarms
     :return: Name of the site's wikifarm, if it is hosted by one
@@ -127,3 +131,22 @@ def detect_wikifarm(url_list: Iterable[str]) -> Optional[str]:
                 return wikifarm
     return None
 
+
+def read_user_config(key, default=None):
+    if os.path.isfile(USER_CONFIG_PATH):
+        with open(USER_CONFIG_PATH, "r", encoding="utf-8") as user_config_file:
+            user_config = json.load(user_config_file)
+        return user_config.get(key, default)
+    else:
+        return default
+
+
+def update_user_config(key, value):
+    user_config_exists = os.path.isfile(USER_CONFIG_PATH)
+    with open(USER_CONFIG_PATH, "w+", encoding="utf-8") as user_config_file:
+        if user_config_exists:
+            user_config = json.load(user_config_file)
+        else:
+            user_config = dict()
+        user_config[key] = value
+        json.dump(user_config, user_config_file, indent=2, ensure_ascii=False)

@@ -5,7 +5,8 @@ from requests.exceptions import HTTPError, SSLError
 from typing import Optional
 from urllib.parse import urlparse, urlunparse
 
-from scrapewiki import normalize_url_protocol, request_with_http_fallback, extract_xpath_property, WikiSoftware
+from utils import (normalize_url_protocol, request_with_http_fallback, extract_xpath_property, read_user_config,
+                   WikiSoftware)
 from mediawiki_tools import get_mediawiki_api_url, profile_mediawiki_wiki, normalize_wikia_url, MediaWikiAPIError
 from fextralife_tools import profile_fextralife_wiki
 from dokuwiki_tools import profile_dokuwiki_wiki
@@ -81,7 +82,8 @@ def profile_wiki(wiki_url: str, full_profile: bool = True, headers: Optional[dic
 
 
 def main():
-    headers = {'User-Agent': 'Mozilla/5.0'}
+    # Get User-Agent from user config file (case-sensitive key, unlike the HTTP header)
+    headers = {'User-Agent': read_user_config("User-Agent")}
 
     # Take site URL as input
     wiki_url = ""

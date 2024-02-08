@@ -8,7 +8,7 @@ from io import BytesIO
 from typing import Optional, Callable
 from urllib.parse import urlparse, urlunparse, urljoin, quote as urllib_quote
 
-from scrapewiki import extract_xpath_property
+from utils import extract_xpath_property
 
 
 def extract_metadata_from_fextralife_page(response: requests.Response) -> dict:
@@ -197,7 +197,7 @@ def profile_fextralife_wiki(wiki_page: str | requests.Response, full_profile: bo
     """
 
     # If provided a URL, run an HTTP request
-    if type(wiki_page) is str:
+    if isinstance(wiki_page, str):
         url = wiki_page
         response = requests.get(url, headers=headers)
         if not response:

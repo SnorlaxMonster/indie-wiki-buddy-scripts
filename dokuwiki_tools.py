@@ -10,7 +10,7 @@ from io import BytesIO
 from urllib.parse import urlparse, urljoin, parse_qsl
 from typing import Optional
 
-from scrapewiki import extract_base_url, ensure_absolute_url
+from utils import extract_base_url, ensure_absolute_url
 
 
 def parse_dokuwiki_page_id(page_id: str) -> tuple[Optional[str], Optional[str], str]:
@@ -156,6 +156,11 @@ def get_action_from_dokuwiki_summary(summary):
 def retrieve_dokuwiki_recentchanges(entry_url: str, request_size: int = 1000,
                                     headers: Optional[dict] = None) -> Optional[pd.DataFrame]:
     """
+    Retrieve Recent Changes from a DokuWiki wiki within the specified time window.
+
+    Results outside the window will typically be included at the end of the table.
+    They are not filtered out in order to allow checking the most recent edit's timestamp, even if it is outside the
+    window.
 
     :param entry_url: URL path to content-level PHP files (including feed.php)
     :param request_size: The number of entries to request
@@ -313,7 +318,7 @@ def profile_dokuwiki_wiki(wiki_page: str | requests.Response, full_profile: bool
     :return: JSON-serializable dict of wiki metadata in standardized format
     """
     # If provided a URL, run an HTTP request
-    if type(wiki_page) is str:
+    if isinstance(wiki_page, str):
         input_page_url = wiki_page
         input_page_response = requests.get(input_page_url, headers=headers)
         if not input_page_response:

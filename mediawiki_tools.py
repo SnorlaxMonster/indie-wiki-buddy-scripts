@@ -2,7 +2,6 @@
 Python script for generating metadata about wikis
 """
 import datetime
-import lxml.etree
 import lxml.html
 import pandas as pd
 import re
@@ -13,8 +12,8 @@ from io import BytesIO
 from typing import Optional, Generator
 from urllib.parse import urlparse, urlunparse, urljoin
 
-from scrapewiki import (extract_xpath_property, ensure_absolute_url, normalize_url_protocol,
-                        request_with_http_fallback, detect_wikifarm)
+from utils import (extract_xpath_property, ensure_absolute_url, normalize_url_protocol,
+                   request_with_http_fallback, detect_wikifarm)
 
 
 class MediaWikiAPIError(Exception):
@@ -92,7 +91,7 @@ def get_mediawiki_api_url(wiki_page: str | requests.Response, headers: Optional[
     :return: Wiki's API URL
     """
     # If provided a URL, run an HTTP request
-    if type(wiki_page) is str:
+    if isinstance(wiki_page, str):
         url = wiki_page
 
         # Check that the input URL isn't already an API URL
@@ -212,6 +211,8 @@ def query_mediawiki_api_with_continue(api_url: str, params: dict, headers: Optio
     """
     Runs a MediaWiki API query with the specified parameters.
 
+    Based on https://www.mediawiki.org/wiki/API:Continue#Example_3:_Python_code_for_iterating_through_all_results
+
     :param api_url: MediaWiki API URL
     :param params: Query parameters
     :param headers: Headers to include in the request (e.g. user-agent)
@@ -220,7 +221,6 @@ def query_mediawiki_api_with_continue(api_url: str, params: dict, headers: Optio
     :raises: MediaWikiAPIError: If the API query returns an error
     """
 
-    # Based on https://www.mediawiki.org/wiki/API:Continue#Example_3:_Python_code_for_iterating_through_all_results
     params['action'] = 'query'
     params['format'] = 'json'
     last_continue = {}
