@@ -70,27 +70,33 @@ def normalize_url_protocol(url: str, default_protocol="https") -> str:
         return f"{default_protocol}://{url}"
 
 
-def request_with_http_fallback(raw_url: str, **kwargs) -> requests.Response:
+def request_with_http_fallback(raw_url: str, session: Optional[requests.Session] = None, **kwargs) -> requests.Response:
     """
     Attempts to resolve the URL, then falls back to HTTP if an SSLError occurred.
 
     :param raw_url: URL to resolve
+    :param session: requests Session to use for resolving the URL
     :param kwargs: kwargs to use for the HTTP requests
     :return: GET request response
     """
+    # Create a new session if one was not provided
+    if session is None:
+        session = requests.Session()
+
+    # Prepare the URL
     url = normalize_url_protocol(raw_url)
-    parsed_url = urlparse(url)
 
     # GET request the URL
     try:
-        response = requests.get(url, **kwargs)
+        response = session.get(url, **kwargs)
 
     # If using HTTPS results in an SSLError, try HTTP instead
     except SSLError as e:
+        parsed_url = urlparse(url)
         if parsed_url.scheme != "http":
             print(f"⚠ SSLError for {raw_url} . Defaulting to HTTP connection.")
             url = urlunparse(parsed_url._replace(scheme="http"))
-            response = requests.get(url, **kwargs)
+            response = session.get(url, **kwargs)
         else:
             raise e
 
@@ -130,6 +136,40 @@ def detect_wikifarm(url_list: Iterable[str]) -> Optional[str]:
             if wikifarm in url:
                 return wikifarm
     return None
+
+
+def resolve_wiki_page(wiki_page: str | requests.Response,
+                      session: Optional[requests.Session] = None, headers: Optional[dict] = None) -> requests.Response:
+    """
+    Given a URL, returns the corresponding Response object.
+    If given a response object, just returns the response unmodified.
+
+    This function is used to allow functions to take either a wiki page or response object as input.
+
+    :param wiki_page: URL of a wiki page, or Response object for a wiki page URL
+    :param session: requests Session to use for resolving the URL
+    :param headers: Headers to include in HTTP requests (e.g. user-agent)
+    :return: Response object for a wiki page URL
+    """
+    # If provided a response, return it unmodified
+    if isinstance(wiki_page, requests.Response):
+        response = wiki_page
+        return response
+
+    # If no Session was provided, create one
+    if session is None:
+        session = requests.Session()
+
+    # If provided a URL, run an HTTP request
+    assert isinstance(wiki_page, str)
+    url = wiki_page
+    response = request_with_http_fallback(url, session=session, headers=headers)
+
+    # If the request returned an error, raise an exception
+    if not response:
+        response.raise_for_status()
+
+    return response
 
 
 def read_user_config(key, default=None):

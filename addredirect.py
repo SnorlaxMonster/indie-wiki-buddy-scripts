@@ -154,7 +154,7 @@ def generate_icon_filename(wiki_name: str) -> str:
     return filename_stem + ".png"
 
 
-def download_wiki_icon(icon_url: str, wiki_name: str, language_code: str,
+def download_wiki_icon(icon_url: str, wiki_name: str, language_code: str, session: Optional[requests.Session] = None,
                        headers: Optional[dict] = None, iwb_filepath: str | os.PathLike = ".") -> Optional[str]:
     """
     Downloads the wiki icon from the specified URL and adds it to the appropriate JSON file.
@@ -162,14 +162,19 @@ def download_wiki_icon(icon_url: str, wiki_name: str, language_code: str,
     :param icon_url: URL for the wiki's icon
     :param wiki_name: Name of the wiki the icon is for
     :param language_code: Language of the new entry (as 2-letter language code)
-    :param headers: Headers to use for the favicon download (e.g. user-agent).
+    :param session: requests Session to use for resolving the URL
+    :param headers: Headers to use for the favicon download (e.g. user-agent)
     :param iwb_filepath: Filepath to IWB code, if it differs from the directory the script is being run from.
     :return: Filename the downloaded icon was saved to
     """
+    # Create a new session if one was not provided
+    if session is None:
+        session = requests.Session()
+
     # Download icon file
     try:
         icon_url = normalize_url_protocol(icon_url)
-        icon_file_response = requests.get(icon_url, headers=headers)
+        icon_file_response = session.get(icon_url, headers=headers)
     except ConnectionError:
         icon_file_response = None
 
@@ -238,13 +243,26 @@ def entry_id_is_unique(sites_json: list[dict], new_entry_id: str):
     return True
 
 
-def get_sites_json_filepath(language_code, iwb_filepath: str | os.PathLike = "."):
+def get_sites_json_filepath(language_code: str, iwb_filepath: str | os.PathLike = ".") -> str:
+    """
+    Gets the filepath of the sites JSON file for a particular language.
+
+    :param language_code: The language of the sites JSON file
+    :param iwb_filepath: Filepath to Indie Wiki Buddy repo
+    :return: Filepath of the corresponding sites JSON file
+    """
     # Open relevant sites JSON file
     assert os.path.isdir(os.path.join(iwb_filepath, "data"))
     return os.path.join(iwb_filepath, "data", f"sites{language_code.upper()}.json")
 
 
 def read_sites_json(sites_json_filepath: str | os.PathLike) -> list[dict]:
+    """
+    Read the contents of a sites JSON file.
+
+    :param sites_json_filepath: Filepath of a sites JSON file
+    :return: Contents of the sites JSON file (or an empty list if it doesn't exist)
+    """
     # If there is not currently a sites JSON for this language, start from an empty list
     if not os.path.isfile(sites_json_filepath):
         return []
@@ -416,23 +434,28 @@ def get_iwb_filepath() -> str:
     return iwb_filepath
 
 
-def get_wiki_metadata_cli(site_class: str, key_properties: Iterable, headers: Optional[dict] = None):
+def get_wiki_metadata_cli(site_class: str, key_properties: Iterable,
+                          session: Optional[requests.Session] = None, headers: Optional[dict] = None):
     """
     CLI for preparing the data for a new origin or destination site.
     Retrieves the base_url, as well as any properties specified in key_properties.
 
     :param site_class: Whether the site is the origin or destination site
     :param key_properties: The properties that need to be collected for this site
+    :param session: requests Session to use for resolving the URL
     :param headers: Headers to use for HTTP requests (e.g. user-agent)
     :return: Dict of the required properties
     """
+    # Create a new session if one was not provided
+    if session is None:
+        session = requests.Session()
 
     # Resolve input URL
     wiki_url = ""
     while wiki_url.strip() == "":
         wiki_url = input(f"📥 Enter {site_class} wiki URL: ")
     try:
-        response = request_with_http_fallback(wiki_url, headers=headers)
+        response = request_with_http_fallback(wiki_url, session=session, headers=headers)
     except (SSLError, ConnectionError) as e:
         print(e)
         response = None
@@ -451,14 +474,14 @@ def get_wiki_metadata_cli(site_class: str, key_properties: Iterable, headers: Op
         if wiki_software == WikiSoftware.MEDIAWIKI:
             print(f"ℹ Detected MediaWiki software")
             print(f"🕑 Getting {site_class} wiki info...")
-            api_url = get_mediawiki_api_url(response)
+            api_url = get_mediawiki_api_url(response, session=session, headers=headers)
             if api_url is None:
                 print(f"⚠ Unable to automatically retrieve API URL for {wiki_url}.")
                 api_url = input(f"📥 Enter {site_class} wiki API URL: ")
                 print(f"🕑 Getting {site_class} site info...")
 
             siteinfo_params = {'action': 'query', 'meta': 'siteinfo', 'siprop': 'general', 'format': 'json'}
-            siteinfo = query_mediawiki_api(api_url, params=siteinfo_params, headers=headers)
+            siteinfo = query_mediawiki_api(api_url, params=siteinfo_params, session=session, headers=headers)
             wiki_data = extract_metadata_from_siteinfo(siteinfo)
 
             # If the icon URL was not found via the standard method, try to find it from the HTML
@@ -475,7 +498,7 @@ def get_wiki_metadata_cli(site_class: str, key_properties: Iterable, headers: Op
         elif wiki_software == WikiSoftware.DOKUWIKI:
             print(f"ℹ Detected DokuWiki software")
             print(f"🕑 Getting {site_class} wiki info...")
-            wiki_data = profile_dokuwiki_wiki(response, full_profile=False, headers=headers)
+            wiki_data = profile_dokuwiki_wiki(response, full_profile=False, session=session, headers=headers)
 
         else:
             print(f"⚠ {wiki_url} uses currently unsupported software. Details will need to be entered manually.")
@@ -531,15 +554,17 @@ def main():
     """
     Interactive CLI for adding new wikis one at a time
     """
-    # Get User-Agent from user config file (case-sensitive key, unlike the HTTP header)
-    headers = {'User-Agent': read_user_config("User-Agent")}
+    # Prepare user-agent
+    headers = {'User-Agent': read_user_config("User-Agent")}  # case-sensitive key, unlike the HTTP header
 
     # Get IWB filepath
     iwb_filepath = get_iwb_filepath()
 
     # Get origin wiki data
+    origin_session = requests.Session()
     origin_key_properties = ["base_url", "name", "language", "main_page", "content_path"]
-    origin_site_metadata = get_wiki_metadata_cli("origin", origin_key_properties, headers=headers)
+    origin_site_metadata = get_wiki_metadata_cli("origin", origin_key_properties,
+                                                 session=origin_session, headers=headers)
 
     # Determine sites JSON filepath
     language = origin_site_metadata["language"]
@@ -558,8 +583,10 @@ def main():
         print(f"✅ {origin_base_url} is a new entry!")
 
     # Get destination wiki data
+    destination_session = requests.Session()
     destination_key_properties = ["base_url", "name", "language", "main_page", "search_path", "platform", "icon_path"]
-    destination_site_metadata = get_wiki_metadata_cli("destination", destination_key_properties, headers=headers)
+    destination_site_metadata = get_wiki_metadata_cli("destination", destination_key_properties,
+                                                      session=destination_session, headers=headers)
 
     # Validate wiki language
     if not validate_wiki_languages(origin_site_metadata, destination_site_metadata):
@@ -614,7 +641,7 @@ def main():
         destination_wiki_name = destination_site_metadata["name"]
         print("🕑 Grabbing destination wiki's favicon...")
         icon_filename = download_wiki_icon(icon_url, destination_wiki_name, language,
-                                           headers=headers, iwb_filepath=iwb_filepath)
+                                           session=destination_session, headers=headers, iwb_filepath=iwb_filepath)
         if icon_filename is not None:
             print(f"🖼 Favicon saved as {icon_filename}!")
             new_entry["destination_icon"] = icon_filename

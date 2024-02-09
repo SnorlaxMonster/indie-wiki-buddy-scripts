@@ -12,8 +12,8 @@ from io import BytesIO
 from typing import Optional, Generator
 from urllib.parse import urlparse, urlunparse, urljoin
 
-from utils import (extract_xpath_property, ensure_absolute_url, normalize_url_protocol,
-                   request_with_http_fallback, detect_wikifarm)
+from utils import (extract_xpath_property, ensure_absolute_url, normalize_url_protocol, resolve_wiki_page,
+                   detect_wikifarm)
 
 
 class MediaWikiAPIError(Exception):
@@ -82,27 +82,23 @@ def get_mediawiki_favicon_url(parsed_html: lxml.html.etree) -> Optional[str]:
     return ensure_absolute_url(icon_url, page_url)
 
 
-def get_mediawiki_api_url(wiki_page: str | requests.Response, headers: Optional[dict] = None) -> Optional[str]:
+def get_mediawiki_api_url(wiki_page: str | requests.Response, session: Optional[requests.Session] = None,
+                          headers: Optional[dict] = None) -> Optional[str]:
     """
     Given a URL or HTTP response for a wiki page, determines the wiki's API URL.
 
     :param wiki_page: URL or HTTP response for a wiki page
+    :param session: requests Session to use for resolving the URL
     :param headers: Headers to include in the request (e.g. user-agent) if provided a URL
     :return: Wiki's API URL
     """
+    # If provided an API URL, just return that URL
+    if isinstance(wiki_page, str) and wiki_page.endswith("/api.php"):
+        api_url = wiki_page
+        return api_url
+
     # If provided a URL, run an HTTP request
-    if isinstance(wiki_page, str):
-        url = wiki_page
-
-        # Check that the input URL isn't already an API URL
-        if url.endswith("/api.php"):
-            return url
-
-        response = request_with_http_fallback(url, headers=headers)
-        if not response:
-            response.raise_for_status()
-    else:
-        response = wiki_page
+    response = resolve_wiki_page(wiki_page, session=session, headers=headers)
 
     # Parse the HTML
     parsed_html = lxml.html.parse(BytesIO(response.content))
@@ -138,7 +134,7 @@ def get_mediawiki_api_url(wiki_page: str | requests.Response, headers: Optional[
         fandom_url = get_fandom_url_from_breezewiki(response)
         if fandom_url is not None:
             print(f"ℹ {response.url} is a BreezeWiki site. Retrieving API URL from Fandom.")
-            return get_mediawiki_api_url(fandom_url, headers=headers)
+            return get_mediawiki_api_url(fandom_url, session=session, headers=headers)
 
     # Otherwise, the API URL retrieval has failed
     return None
@@ -170,25 +166,30 @@ def get_fandom_url_from_breezewiki(response: Optional[requests.Response]) -> Opt
         return None
 
 
-def query_mediawiki_api(api_url: str, params: dict, **kwargs) -> dict:
+def query_mediawiki_api(api_url: str, params: dict, session: Optional[requests.Session] = None, **kwargs) -> dict:
     """
     Runs a MediaWiki API query with the specified parameters.
 
     :param api_url: MediaWiki API URL
-    :param params: params to use for the HTTP requests
-    :param kwargs: kwargs to use for the HTTP requests
+    :param params: params to use for HTTP requests
+    :param session: requests Session to use for HTTP requests
+    :param kwargs: kwargs to use for HTTP requests
     :return: API query result
     :raises: HTTPError: If the API request returns an HTTP error code
     :raises: MediaWikiAPIError: If the API query returns an error
     """
+    # Create a new session if one was not provided
+    if session is None:
+        session = requests.Session()
+
     # GET request API query
-    response = requests.get(api_url, params=params, **kwargs)
+    response = session.get(api_url, params=params, **kwargs)
 
     # If the response is Error 429 (Too Many Requests), sleep for 30 seconds then try again (once only)
     if response.status_code == 429:
-        print(f"🕑 Error 429 Too Many Requests. Sleeping for 30 seconds...")
+        print(f"🕑 Error 429 {response.reason}. Sleeping for 30 seconds...")
         time.sleep(30)
-        response = requests.get(api_url, params=params, **kwargs)
+        response = session.get(api_url, params=params, **kwargs)
 
     # If the response is an error, raise an HTTPError
     if not response:
@@ -206,20 +207,24 @@ def query_mediawiki_api(api_url: str, params: dict, **kwargs) -> dict:
     return result['query']
 
 
-def query_mediawiki_api_with_continue(api_url: str, params: dict, headers: Optional[dict] = None) \
-        -> Generator[dict, None, None]:
+def query_mediawiki_api_with_continue(api_url: str, params: dict, session: Optional[requests.Session] = None,
+                                      headers: Optional[dict] = None) -> Generator[dict, None, None]:
     """
     Runs a MediaWiki API query with the specified parameters.
 
     Based on https://www.mediawiki.org/wiki/API:Continue#Example_3:_Python_code_for_iterating_through_all_results
 
     :param api_url: MediaWiki API URL
-    :param params: Query parameters
+    :param params: params to use for HTTP requests
+    :param session: requests Session to use for HTTP requests
     :param headers: Headers to include in the request (e.g. user-agent)
     :return: Generator of API query results
     :raises: HTTPError: If the API request returns an HTTP error code
     :raises: MediaWikiAPIError: If the API query returns an error
     """
+    # Create a new session if one was not provided
+    if session is None:
+        session = requests.Session()
 
     params['action'] = 'query'
     params['format'] = 'json'
@@ -230,7 +235,7 @@ def query_mediawiki_api_with_continue(api_url: str, params: dict, headers: Optio
         # Modify it with the values returned in the 'continue' section of the last result.
         request_params.update(last_continue)
         # Call API
-        response = requests.get(api_url, params=request_params, headers=headers)
+        response = session.get(api_url, params=request_params, headers=headers)
 
         # If the response is an error, raise an HTTPError
         if not response:
@@ -315,6 +320,7 @@ def extract_metadata_from_siteinfo(siteinfo: dict) -> dict:
 
 
 def retrieve_mediawiki_recentchanges(api_url: str, window_end: datetime.datetime, extra_params: Optional[dict] = None,
+                                     session: Optional[requests.Session] = None,
                                      headers: Optional[dict] = None) -> pd.DataFrame:
     """
     Returns the full set of Recent Changes back to a specific date.
@@ -323,6 +329,7 @@ def retrieve_mediawiki_recentchanges(api_url: str, window_end: datetime.datetime
     :param api_url: MediaWiki API URL
     :param window_end: Date of the earliest Recent Changes entry to include
     :param extra_params: Parameters to include in the Recent Changes query, beyond the default values
+    :param session: requests Session to use for HTTP requests
     :param headers: Headers to include in HTTP requests (e.g. user-agent)
     :return: DataFrame of Recent Changes
     """
@@ -337,7 +344,7 @@ def retrieve_mediawiki_recentchanges(api_url: str, window_end: datetime.datetime
 
     # Execute query, iterating over each continuation (MediaWiki typically returns up to 500 results per query)
     rc_contents = []
-    for result in query_mediawiki_api_with_continue(api_url, params=query_params, headers=headers):
+    for result in query_mediawiki_api_with_continue(api_url, params=query_params, session=session, headers=headers):
         rc_contents += result['recentchanges']
 
     rc_df = pd.DataFrame(rc_contents)
@@ -347,6 +354,7 @@ def retrieve_mediawiki_recentchanges(api_url: str, window_end: datetime.datetime
 
 
 def profile_mediawiki_recentchanges(api_url: str, rc_days_limit: int, siteinfo: dict,
+                                    session: Optional[requests.Session] = None,
                                     headers: Optional[dict] = None) -> tuple[int, Optional[datetime.datetime]]:
     """
     Determines the number of content-namespace edits by humans to the wiki within the last X days,
@@ -355,6 +363,7 @@ def profile_mediawiki_recentchanges(api_url: str, rc_days_limit: int, siteinfo: 
     :param api_url: MediaWiki API URL
     :param rc_days_limit: The number of days to look back when retrieving Recent Changes
     :param siteinfo: Result of a previous MediaWiki siteinfo query
+    :param session: requests Session to use for HTTP requests
     :param headers: Headers to include in the request (e.g. user-agent)
     :return: number of edits in the time window, and timestamp of the last edit
     """
@@ -385,7 +394,7 @@ def profile_mediawiki_recentchanges(api_url: str, rc_days_limit: int, siteinfo: 
     else:
         query_params = {'list': 'recentchanges', 'rcshow': '!bot', 'rclimit': 1, 'rctype': 'edit|new|categorize',
                         "rcnamespace": '|'.join(str(ns) for ns in content_namespaces)}
-        rc_extended = query_mediawiki_api(api_url, query_params, headers=headers)
+        rc_extended = query_mediawiki_api(api_url, query_params, session=session, headers=headers)
 
         # Get the most recent edit from the Recent Changes result
         rc_contents = rc_extended["recentchanges"]
@@ -397,37 +406,42 @@ def profile_mediawiki_recentchanges(api_url: str, rc_days_limit: int, siteinfo: 
     return edit_count, latest_edit_timestamp
 
 
-def profile_mediawiki_wiki(wiki_url: str, full_profile: bool = True,
-                           rc_days_limit: int = 30, headers: Optional[dict] = None) -> dict:
+def profile_mediawiki_wiki(wiki_page: str | requests.Response, full_profile: bool = True, rc_days_limit: int = 30,
+                           session: Optional[requests.Session] = None, headers: Optional[dict] = None) -> dict:
     """
     Uses the MediaWiki API to retrieve key information about the specified MediaWiki site,
     including content and activity metrics.
 
-    :param wiki_url: URL for a page on the MediaWiki wiki, or the API URL of the MediaWiki wiki
+    :param wiki_page: MediaWiki wiki page URL or HTTP request response
     :param full_profile: Whether to include activity and content metrics
     :param rc_days_limit: The number of days to look back when retrieving Recent Changes
+    :param session: requests Session to use for resolving the URL
     :param headers: Headers to include in HTTP requests (e.g. user-agent)
     :return: JSON-serializable dict of wiki metadata in standardized format
     """
-    # If the provided URL is not an API URL, determine the MediaWiki API URL
-    if wiki_url.endswith("/api.php"):
-        api_url = wiki_url
+    # Create a new session if one was not provided
+    if session is None:
+        session = requests.Session()
+
+    # If not provided an API URL, use the wiki page to find the API URL
+    if isinstance(wiki_page, str) and wiki_page.endswith("/api.php"):
+        api_url = wiki_page
     else:
-        api_url = get_mediawiki_api_url(wiki_url, headers=headers)
+        api_url = get_mediawiki_api_url(wiki_page, headers=headers)
         if api_url is None:
             raise MediaWikiAPIError("Unable to determine MediaWiki API URL")
 
     # Request siteinfo data
     siteinfo_params = {'format': 'json', 'action': 'query', 'meta': 'siteinfo',
                        'siprop': 'general|namespaces|statistics|rightsinfo'}
-    siteinfo = query_mediawiki_api(api_url, params=siteinfo_params, headers=headers)
+    siteinfo = query_mediawiki_api(api_url, params=siteinfo_params, session=session, headers=headers)
 
     if not full_profile:
         return siteinfo
 
     # Request recentchanges data
     recent_edit_count, latest_edit_timestamp = profile_mediawiki_recentchanges(api_url, rc_days_limit, siteinfo,
-                                                                               headers=headers)
+                                                                               session=session, headers=headers)
 
     # Extract data
     wiki_metadata = extract_metadata_from_siteinfo(siteinfo)

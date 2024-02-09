@@ -1,7 +1,8 @@
 import json
 import lxml.html
 from io import BytesIO
-from requests.exceptions import HTTPError, SSLError
+from requests import Session
+from requests.exceptions import RequestException
 from typing import Optional
 from urllib.parse import urlparse, urlunparse
 
@@ -49,34 +50,39 @@ def determine_wiki_software(parsed_html: lxml.html.etree) -> Optional[WikiSoftwa
     return None
 
 
-def profile_wiki(wiki_url: str, full_profile: bool = True, headers: Optional[dict] = None) -> Optional[dict]:
+def profile_wiki(wiki_url: str, full_profile: bool = True, session: Optional[Session] = None,
+                 headers: Optional[dict] = None) -> Optional[dict]:
     """
     Given a URL of any type of wiki, retrieves key information about the wiki,
     including content and activity metrics.
 
     :param wiki_url: Wiki URL
     :param full_profile: Whether to include activity and content metrics
+    :param session: requests Session to use for resolving the URL
     :param headers: Headers to include in HTTP requests (e.g. user-agent)
     :return: JSON-serializable dict of wiki metadata in standardized format
     """
+    # Create a new session if one was not provided
+    if session is None:
+        session = Session()
 
     # GET request input URL
     wiki_url = normalize_url_protocol(wiki_url)
-    response = request_with_http_fallback(wiki_url, headers=headers)
+    response = request_with_http_fallback(wiki_url, session=session, headers=headers)
     if not response:
         response.raise_for_status()
-    parsed_html = lxml.html.parse(BytesIO(response.content))
 
     # Detect wiki software
+    parsed_html = lxml.html.parse(BytesIO(response.content))
     wiki_software = determine_wiki_software(parsed_html)
 
     # Select profiler based on software
     if wiki_software == WikiSoftware.MEDIAWIKI:
-        return profile_mediawiki_wiki(wiki_url, full_profile=full_profile, headers=headers)
+        return profile_mediawiki_wiki(response, full_profile=full_profile, session=session, headers=headers)
     elif wiki_software == WikiSoftware.FEXTRALIFE:
-        return profile_fextralife_wiki(wiki_url, full_profile=full_profile, headers=headers)
+        return profile_fextralife_wiki(response, full_profile=full_profile, session=session, headers=headers)
     elif wiki_software == WikiSoftware.DOKUWIKI:
-        return profile_dokuwiki_wiki(wiki_url, full_profile=full_profile, headers=headers)
+        return profile_dokuwiki_wiki(response, full_profile=full_profile, session=session, headers=headers)
     else:
         return None
 
@@ -95,7 +101,7 @@ def main():
     print(f"🕑 Resolving {wiki_url}")
     try:
         response = request_with_http_fallback(wiki_url, headers=headers)
-    except (HTTPError, ConnectionError, SSLError) as e:
+    except RequestException as e:
         print(e)
         return
 
@@ -115,7 +121,7 @@ def main():
         print(f"🕑 Submitting queries to {api_url}")
         try:
             wiki_metadata = profile_mediawiki_wiki(api_url, full_profile=True, rc_days_limit=30, headers=headers)
-        except (HTTPError, ConnectionError, SSLError, MediaWikiAPIError) as e:
+        except (RequestException, MediaWikiAPIError) as e:
             print(e)
             return
 
@@ -127,7 +133,7 @@ def main():
         print(f"🕑 Submitting queries to {base_url}")
         try:
             wiki_metadata = profile_fextralife_wiki(response, full_profile=True, rc_days_limit=30, headers=headers)
-        except (HTTPError, ConnectionError, SSLError, MediaWikiAPIError) as e:
+        except RequestException as e:
             print(e)
             return
 
@@ -143,7 +149,7 @@ def main():
         print(f"🕑 Submitting queries to {base_url}")
         try:
             wiki_metadata = profile_dokuwiki_wiki(response, full_profile=True, rc_days_limit=30, headers=headers)
-        except (HTTPError, ConnectionError, SSLError, MediaWikiAPIError) as e:
+        except RequestException as e:
             print(e)
             return
 

@@ -10,7 +10,7 @@ from io import BytesIO
 from urllib.parse import urlparse, urljoin, parse_qsl
 from typing import Optional
 
-from utils import extract_base_url, ensure_absolute_url
+from utils import extract_base_url, ensure_absolute_url, resolve_wiki_page
 
 
 def parse_dokuwiki_page_id(page_id: str) -> tuple[Optional[str], Optional[str], str]:
@@ -30,19 +30,25 @@ def parse_dokuwiki_page_id(page_id: str) -> tuple[Optional[str], Optional[str], 
         return None, None, page_id
 
 
-def retrieve_dokuwiki_sitemap(entry_url: str, headers: Optional[dict] = None) -> Optional[pd.DataFrame]:
+def retrieve_dokuwiki_sitemap(entry_url: str, session: Optional[requests.Session] = None,
+                              headers: Optional[dict] = None) -> Optional[pd.DataFrame]:
     """
     Retrieves a list of all pages on the specified wiki (and their namespaces) from its sitemap.
 
     :param entry_url: URL path to content-level PHP files (including doku.php)
+    :param session: requests Session to use for resolving the URL
     :param headers: Headers to include in the HTTP request (e.g. user-agent)
     :return: DataFrame of all pages on the wiki and their namespaces. If the sitemap cannot be retrieved, returns None.
     """
+    # Create a new session if one was not provided
+    if session is None:
+        session = requests.Session()
+
     # Request sitemap
     if not entry_url.endswith("/"):
         entry_url += "/"
     php_url = urljoin(entry_url, 'doku.php')
-    response = requests.get(php_url, params={"do": "sitemap"}, headers=headers)
+    response = session.get(php_url, params={"do": "sitemap"}, headers=headers)
 
     # If the wiki does not have a sitemap configured (which is not uncommon), return None
     if not response:
@@ -66,14 +72,20 @@ def retrieve_dokuwiki_sitemap(entry_url: str, headers: Optional[dict] = None) ->
     return sitemap_df
 
 
-def retrieve_dokuwiki_index(entry_url, headers: Optional[dict] = None) -> pd.DataFrame:
+def retrieve_dokuwiki_index(entry_url, session: Optional[requests.Session] = None,
+                            headers: Optional[dict] = None) -> pd.DataFrame:
     """
     Retrieves a list of all pages on the specified wiki (and their namespaces) from its index page.
 
     :param entry_url: URL path to content-level PHP files (including doku.php)
+    :param session: requests Session to use for resolving the URL
     :param headers: Headers to include in the HTTP request (e.g. user-agent)
     :return:
     """
+    # Create a new session if one was not provided
+    if session is None:
+        session = requests.Session()
+
     def parse_dokuwiki_index_directory(directory_elem):
         # Retrieve all listed elements
         page_list = directory_elem.xpath('.//a[@class="wikilink1"]')
@@ -90,7 +102,7 @@ def retrieve_dokuwiki_index(entry_url, headers: Optional[dict] = None) -> pd.Dat
 
                 # Request the expanded directory
                 subdirectory_url = urljoin(entry_url, subdirectory_url_path)
-                subdirectory_response = requests.get(subdirectory_url)
+                subdirectory_response = session.get(subdirectory_url)
 
                 # Select just the expanded directory, and parse its contents
                 subdirectory_tree = lxml.html.parse(BytesIO(subdirectory_response.content))
@@ -102,7 +114,7 @@ def retrieve_dokuwiki_index(entry_url, headers: Optional[dict] = None) -> pd.Dat
 
     # Request index page
     php_url = urljoin(entry_url, "doku.php")
-    response = requests.get(php_url, params={"do": "index"}, headers=headers)
+    response = session.get(php_url, params={"do": "index"}, headers=headers)
     if not response:
         response.raise_for_status()
     html_tree = lxml.html.parse(BytesIO(response.content))
@@ -154,6 +166,7 @@ def get_action_from_dokuwiki_summary(summary):
 
 
 def retrieve_dokuwiki_recentchanges(entry_url: str, request_size: int = 1000,
+                                    session: Optional[requests.Session] = None,
                                     headers: Optional[dict] = None) -> Optional[pd.DataFrame]:
     """
     Retrieve Recent Changes from a DokuWiki wiki within the specified time window.
@@ -164,11 +177,17 @@ def retrieve_dokuwiki_recentchanges(entry_url: str, request_size: int = 1000,
 
     :param entry_url: URL path to content-level PHP files (including feed.php)
     :param request_size: The number of entries to request
+    :param session: requests Session to use for resolving the URL
     :param headers: Headers to include in HTTP requests (e.g. user-agent)
     :return: DataFrame of Recent Changes
     """
+    # Create a new session if one was not provided
+    if session is None:
+        session = requests.Session()
+
+    # Request the Recent Changes feed
     feed_url = urljoin(entry_url, "feed.php")
-    response = requests.get(feed_url, headers=headers, params={"num": request_size, "minor": str(int(True)),
+    response = session.get(feed_url, headers=headers, params={"num": request_size, "minor": str(int(True)),
                                                                "mode": "recent"})
     if not response:
         response.raise_for_status()
@@ -212,28 +231,6 @@ def get_dokuwiki_page_id(html_tree: lxml.html.etree) -> str:
     page_id = jsinfo_match.group(1)
 
     return page_id
-
-
-def get_dokuwiki_main_page(html_tree: lxml.html.etree, entry_url: str) -> str:
-    """
-    Find the page ID of the Main Page of a DokuWiki.
-
-    :param html_tree: Parsed HTML of a DokuWiki page
-    :param entry_url: URL path to content-level PHP files (including doku.php)
-    :return: Page ID of the Main Page
-    """
-    # Find the Main Page URL
-    home_path = html_tree.find('//link[@rel="start"]').get("href")
-    main_page_url = urljoin(entry_url, home_path)
-
-    # Request the Main Page
-    main_page_response = requests.get(main_page_url)
-    if not main_page_response:
-        main_page_response.raise_for_status()
-    main_page_html = lxml.html.parse(BytesIO(main_page_response.content))
-
-    # Get the ID of the Main Page
-    return get_dokuwiki_page_id(main_page_html)
 
 
 def get_dokuwiki_content_path_from_url(page_url: Optional[str], page_id: str) -> Optional[str]:
@@ -305,8 +302,8 @@ def get_dokuwiki_content_path(parsed_html: lxml.html.etree, response_url: str) -
     return None
 
 
-def profile_dokuwiki_wiki(wiki_page: str | requests.Response, full_profile: bool = True,
-                          rc_days_limit: int = 30, headers: Optional[dict] = None) -> dict:
+def profile_dokuwiki_wiki(wiki_page: str | requests.Response, full_profile: bool = True, rc_days_limit: int = 30,
+                          session: Optional[requests.Session] = None, headers: Optional[dict] = None) -> dict:
     """
     Given a URL or HTTP request response for a page of a DokuWiki wiki, retrieves key information about the wiki,
     including content and activity metrics.
@@ -314,27 +311,25 @@ def profile_dokuwiki_wiki(wiki_page: str | requests.Response, full_profile: bool
     :param wiki_page: DokuWiki wiki page URL or HTTP request response
     :param full_profile: Whether to include activity and content metrics
     :param rc_days_limit: The number of days to look back when retrieving Recent Changes
+    :param session: requests Session to use for resolving the URL
     :param headers: Headers to include in HTTP requests (e.g. user-agent)
     :return: JSON-serializable dict of wiki metadata in standardized format
     """
+    # Create a new session if one was not provided
+    if session is None:
+        session = requests.Session()
+
     # If provided a URL, run an HTTP request
-    if isinstance(wiki_page, str):
-        input_page_url = wiki_page
-        input_page_response = requests.get(input_page_url, headers=headers)
-        if not input_page_response:
-            input_page_response.raise_for_status()
-    else:
-        input_page_response = wiki_page
-        input_page_url = input_page_response.url
+    input_page_response = resolve_wiki_page(wiki_page, session=session, headers=headers)
 
     # Parse HTML
     input_page_html = lxml.html.parse(BytesIO(input_page_response.content))
-    base_url_with_protocol = extract_base_url(input_page_url)
+    base_url_with_protocol = extract_base_url(input_page_response.url)
 
     # Get the manifest
     manifest_url_path = input_page_html.find('//link[@rel="manifest"]').get("href")
     manifest_url = urljoin(base_url_with_protocol, manifest_url_path)
-    manifest_response = requests.get(manifest_url, headers=headers)
+    manifest_response = session.get(manifest_url, headers=headers)
     if not manifest_response:
         manifest_response.raise_for_status()
     manifest = manifest_response.json()
@@ -342,7 +337,7 @@ def profile_dokuwiki_wiki(wiki_page: str | requests.Response, full_profile: bool
     # Request the Main Page
     entry_url = urljoin(base_url_with_protocol, manifest.get("start_url"))
 
-    main_page_response = requests.get(entry_url)
+    main_page_response = session.get(entry_url, headers=headers)
     if not main_page_response:
         main_page_response.raise_for_status()
     main_page_html = lxml.html.parse(BytesIO(main_page_response.content))
@@ -352,7 +347,7 @@ def profile_dokuwiki_wiki(wiki_page: str | requests.Response, full_profile: bool
     content_path = get_dokuwiki_content_path(main_page_html, main_page_response.url)
     # If that fails, fallback to the input URL
     if content_path is None:
-        content_path = get_dokuwiki_content_path(input_page_html, input_page_url)
+        content_path = get_dokuwiki_content_path(input_page_html, input_page_response.url)
 
     # Other properties
     language_full = input_page_html.getroot().get("lang")
@@ -364,7 +359,7 @@ def profile_dokuwiki_wiki(wiki_page: str | requests.Response, full_profile: bool
     wiki_metadata = {
         # Basic information
         "name": manifest.get("name"),
-        "base_url": urlparse(input_page_url).hostname,
+        "base_url": urlparse(input_page_response.url).hostname,
         "full_language": language_full,
         "language": language_base,
 
@@ -375,10 +370,10 @@ def profile_dokuwiki_wiki(wiki_page: str | requests.Response, full_profile: bool
         "software_version": None,  # Software version does not appear to be publicly available
 
         # Paths
-        "protocol": urlparse(input_page_url).scheme,
+        "protocol": urlparse(input_page_response.url).scheme,
         "main_page": main_page_id,
         "content_path": content_path,
-        "search_path": urljoin(manifest.get("start_url"), "doku.php"),
+        "search_path": urljoin(entry_url, "doku.php"),
         "icon_path": ensure_absolute_url(icon_url, base_url_with_protocol),
 
         # Licensing
@@ -398,9 +393,9 @@ def profile_dokuwiki_wiki(wiki_page: str | requests.Response, full_profile: bool
     # the index requires a separate request for every namespace and subnamespace on the wiki,
     # so is substantially slower, especially for wikis with lots of namespaces.
     # However, many DokuWikis do not configure a sitemap, so the index fallback is still required.
-    page_df = retrieve_dokuwiki_sitemap(entry_url, headers=headers)
+    page_df = retrieve_dokuwiki_sitemap(entry_url, session=session, headers=headers)
     if page_df is None:
-        page_df = retrieve_dokuwiki_index(entry_url, headers=headers)
+        page_df = retrieve_dokuwiki_index(entry_url, session=session, headers=headers)
 
     # Count content pages
     content_pages = len(page_df[~page_df["root_namespace"].isin(non_content_namespaces)])
@@ -408,7 +403,7 @@ def profile_dokuwiki_wiki(wiki_page: str | requests.Response, full_profile: bool
 
     # Request Recent Changes
     window_end = datetime.datetime.now(datetime.timezone.utc) - datetime.timedelta(rc_days_limit)
-    rc_df = retrieve_dokuwiki_recentchanges(entry_url, headers=headers)
+    rc_df = retrieve_dokuwiki_recentchanges(entry_url, session=session, headers=headers)
     if rc_df is None:
         # If the Recent Changes request failed, fill the corresponding values with nulls
         wiki_metadata.update({"active_users": None, "recent_edit_count": None, "latest_edit_timestamp": None})
