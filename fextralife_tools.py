@@ -6,7 +6,7 @@ import re
 import requests
 from io import BytesIO
 from typing import Optional, Callable
-from urllib.parse import urlparse, urlunparse, urljoin, quote as urllib_quote
+from urllib.parse import urlparse, urljoin, quote as urllib_quote
 
 from utils import extract_base_url, extract_xpath_property, resolve_wiki_page
 
@@ -63,14 +63,13 @@ def extract_metadata_from_fextralife_page(response: requests.Response) -> dict:
     return wiki_metadata
 
 
-def retrieve_fextralife_sitemap(base_url: str, session: Optional[requests.Session] = None,
-                                headers: Optional[dict] = None) -> lxml.etree:
+def retrieve_fextralife_sitemap(base_url: str, session: Optional[requests.Session] = None, **kwargs) -> lxml.etree:
     """
     Retrieves and parses the sitemap for a specified Fextralife wiki.
 
     :param base_url: Fextralife wiki domain (including protocol, excluding a path)
     :param session: requests Session to use for resolving the URL
-    :param headers: Headers to include in the HTTP request (e.g. user-agent)
+    :param kwargs: kwargs to use for the HTTP requests
     :return: Parsed sitemap
     """
     # Create a new session if one was not provided
@@ -79,7 +78,7 @@ def retrieve_fextralife_sitemap(base_url: str, session: Optional[requests.Sessio
 
     # Retrieve sitemap
     url = urljoin(base_url, 'sitemap.xml')
-    response = session.get(url, headers=headers)
+    response = session.get(url, **kwargs)
     if not response:
         response.raise_for_status()
 
@@ -126,8 +125,7 @@ def retrieve_segmented_recentchanges(base_url: str, window_end: datetime.datetim
                                      url_constructor: Callable[[str, int], str],
                                      rc_parser: Callable[[requests.Response], pd.DataFrame],
                                      offset_increment: int = 1, timestamp_col: str = "timestamp",
-                                     session: Optional[requests.Session] = None,
-                                     headers: Optional[dict] = None) -> pd.DataFrame:
+                                     session: Optional[requests.Session] = None, **kwargs) -> pd.DataFrame:
     """
     Retrieve paginated Recent Changes.
 
@@ -142,7 +140,7 @@ def retrieve_segmented_recentchanges(base_url: str, window_end: datetime.datetim
     :param offset_increment: Value to increase the offset by each iteration
     :param timestamp_col: Column containing the timestamp
     :param session: requests Session to use for resolving the URLs
-    :param headers: Headers to include in HTTP requests (e.g. user-agent)
+    :param kwargs: kwargs to use for the HTTP requests
     :return: DataFrame of Recent Changes
     """
     # Create a new session if one was not provided
@@ -155,7 +153,7 @@ def retrieve_segmented_recentchanges(base_url: str, window_end: datetime.datetim
     while earliest_timestamp >= window_end:
         # Request next page of Recent Changes
         rc_page_url = url_constructor(base_url, offset)
-        response = session.get(rc_page_url, headers=headers)
+        response = session.get(rc_page_url, **kwargs)
         if not response:
             response.raise_for_status()
 
@@ -173,8 +171,7 @@ def retrieve_segmented_recentchanges(base_url: str, window_end: datetime.datetim
 
 
 def retrieve_fextralife_recentchanges(base_url: str, window_end: datetime.datetime,
-                                      session: Optional[requests.Session] = None,
-                                      headers: Optional[dict] = None) -> pd.DataFrame:
+                                      session: Optional[requests.Session] = None, **kwargs) -> pd.DataFrame:
     """
     Retrieve Recent Changes from a Fextralife wiki within the specified time window.
 
@@ -185,7 +182,7 @@ def retrieve_fextralife_recentchanges(base_url: str, window_end: datetime.dateti
     :param base_url: Fextralife wiki domain (including protocol, excluding a path)
     :param window_end: Date of the earliest Recent Changes entry to include
     :param session: requests Session to use for resolving the URLs
-    :param headers: Headers to include in HTTP requests (e.g. user-agent)
+    :param kwargs: kwargs to use for the HTTP requests
     :return: DataFrame of Recent Changes
     """
     def parse_fextralife_recentchanges(response: requests.Response) -> pd.DataFrame:
@@ -195,7 +192,7 @@ def retrieve_fextralife_recentchanges(base_url: str, window_end: datetime.dateti
 
     rc_df = retrieve_segmented_recentchanges(base_url, window_end,
                                              compose_fextralife_recentchanges_url, parse_fextralife_recentchanges,
-                                             timestamp_col="date", session=session, headers=headers)
+                                             timestamp_col="date", session=session, **kwargs)
 
     # Drop duplicated RC entries (duplicates can occur if edits are made between GET requests)
     rc_df = rc_df[~rc_df.index.duplicated(keep='first')]
@@ -204,7 +201,7 @@ def retrieve_fextralife_recentchanges(base_url: str, window_end: datetime.dateti
 
 
 def profile_fextralife_wiki(wiki_page: str | requests.Response, full_profile: bool = True, rc_days_limit: int = 30,
-                            session: Optional[requests.Session] = None, headers: Optional[dict] = None) -> dict:
+                            session: Optional[requests.Session] = None, **kwargs) -> dict:
     """
     Given a URL or HTTP request response for a page of a Fextralife wiki, retrieves key information about the wiki,
     including content and activity metrics.
@@ -213,7 +210,7 @@ def profile_fextralife_wiki(wiki_page: str | requests.Response, full_profile: bo
     :param full_profile: Whether to include activity and content metrics
     :param rc_days_limit: The number of days to look back when retrieving Recent Changes
     :param session: requests Session to use for resolving the URL
-    :param headers: Headers to include in HTTP requests (e.g. user-agent)
+    :param kwargs: kwargs to use for the HTTP requests
     :return: JSON-serializable dict of wiki metadata in standardized format
     """
     # Create a new session if one was not provided
@@ -221,7 +218,7 @@ def profile_fextralife_wiki(wiki_page: str | requests.Response, full_profile: bo
         session = requests.Session()
 
     # If provided a URL, run an HTTP request
-    response = resolve_wiki_page(wiki_page, session=session, headers=headers)
+    response = resolve_wiki_page(wiki_page, session=session, **kwargs)
 
     # Extract the base_url
     base_url = extract_base_url(response.url)
@@ -234,8 +231,8 @@ def profile_fextralife_wiki(wiki_page: str | requests.Response, full_profile: bo
 
     # Request the sitemap and Recent Changes
     window_end = datetime.datetime.now() - datetime.timedelta(rc_days_limit)
-    sitemap = retrieve_fextralife_sitemap(base_url, session=session, headers=headers)
-    rc_df = retrieve_fextralife_recentchanges(base_url, window_end=window_end, session=session, headers=headers)
+    sitemap = retrieve_fextralife_sitemap(base_url, session=session, **kwargs)
+    rc_df = retrieve_fextralife_recentchanges(base_url, window_end=window_end, session=session, **kwargs)
     recent_rc_df = rc_df[rc_df["date"] > window_end]
 
     # Content edits are Page edits, Page creations, and Page reversions

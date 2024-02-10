@@ -11,6 +11,7 @@ from typing import Optional, Iterable
 from urllib.parse import urlparse, urlunparse, ParseResult as UrlParseResult
 
 USER_CONFIG_PATH = "user_config.json"
+DEFAULT_TIMEOUT = 1  # seconds
 
 
 class WikiSoftware(Enum):
@@ -138,8 +139,8 @@ def detect_wikifarm(url_list: Iterable[str]) -> Optional[str]:
     return None
 
 
-def resolve_wiki_page(wiki_page: str | requests.Response,
-                      session: Optional[requests.Session] = None, headers: Optional[dict] = None) -> requests.Response:
+def resolve_wiki_page(wiki_page: str | requests.Response, session: Optional[requests.Session] = None,
+                      **kwargs) -> requests.Response:
     """
     Given a URL, returns the corresponding Response object.
     If given a response object, just returns the response unmodified.
@@ -148,7 +149,7 @@ def resolve_wiki_page(wiki_page: str | requests.Response,
 
     :param wiki_page: URL of a wiki page, or Response object for a wiki page URL
     :param session: requests Session to use for resolving the URL
-    :param headers: Headers to include in HTTP requests (e.g. user-agent)
+    :param kwargs: kwargs to use for the HTTP requests
     :return: Response object for a wiki page URL
     """
     # If provided a response, return it unmodified
@@ -163,7 +164,7 @@ def resolve_wiki_page(wiki_page: str | requests.Response,
     # If provided a URL, run an HTTP request
     assert isinstance(wiki_page, str)
     url = wiki_page
-    response = request_with_http_fallback(url, session=session, headers=headers)
+    response = request_with_http_fallback(url, session=session, **kwargs)
 
     # If the request returned an error, raise an exception
     if not response:

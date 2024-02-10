@@ -7,7 +7,7 @@ from typing import Optional
 from urllib.parse import urlparse, urlunparse
 
 from utils import (normalize_url_protocol, request_with_http_fallback, extract_xpath_property, read_user_config,
-                   WikiSoftware)
+                   WikiSoftware, DEFAULT_TIMEOUT)
 from mediawiki_tools import get_mediawiki_api_url, profile_mediawiki_wiki, normalize_wikia_url, MediaWikiAPIError
 from fextralife_tools import profile_fextralife_wiki
 from dokuwiki_tools import profile_dokuwiki_wiki
@@ -51,7 +51,7 @@ def determine_wiki_software(parsed_html: lxml.html.etree) -> Optional[WikiSoftwa
 
 
 def profile_wiki(wiki_url: str, full_profile: bool = True, session: Optional[Session] = None,
-                 headers: Optional[dict] = None) -> Optional[dict]:
+                 **kwargs) -> Optional[dict]:
     """
     Given a URL of any type of wiki, retrieves key information about the wiki,
     including content and activity metrics.
@@ -59,7 +59,7 @@ def profile_wiki(wiki_url: str, full_profile: bool = True, session: Optional[Ses
     :param wiki_url: Wiki URL
     :param full_profile: Whether to include activity and content metrics
     :param session: requests Session to use for resolving the URL
-    :param headers: Headers to include in HTTP requests (e.g. user-agent)
+    :param kwargs: kwargs to use for the HTTP requests
     :return: JSON-serializable dict of wiki metadata in standardized format
     """
     # Create a new session if one was not provided
@@ -68,7 +68,7 @@ def profile_wiki(wiki_url: str, full_profile: bool = True, session: Optional[Ses
 
     # GET request input URL
     wiki_url = normalize_url_protocol(wiki_url)
-    response = request_with_http_fallback(wiki_url, session=session, headers=headers)
+    response = request_with_http_fallback(wiki_url, session=session, **kwargs)
     if not response:
         response.raise_for_status()
 
@@ -78,11 +78,11 @@ def profile_wiki(wiki_url: str, full_profile: bool = True, session: Optional[Ses
 
     # Select profiler based on software
     if wiki_software == WikiSoftware.MEDIAWIKI:
-        return profile_mediawiki_wiki(response, full_profile=full_profile, session=session, headers=headers)
+        return profile_mediawiki_wiki(response, full_profile=full_profile, session=session, **kwargs)
     elif wiki_software == WikiSoftware.FEXTRALIFE:
-        return profile_fextralife_wiki(response, full_profile=full_profile, session=session, headers=headers)
+        return profile_fextralife_wiki(response, full_profile=full_profile, session=session, **kwargs)
     elif wiki_software == WikiSoftware.DOKUWIKI:
-        return profile_dokuwiki_wiki(response, full_profile=full_profile, session=session, headers=headers)
+        return profile_dokuwiki_wiki(response, full_profile=full_profile, session=session, **kwargs)
     else:
         return None
 
@@ -100,7 +100,7 @@ def main():
     # Detect wiki software
     print(f"🕑 Resolving {wiki_url}")
     try:
-        response = request_with_http_fallback(wiki_url, headers=headers)
+        response = request_with_http_fallback(wiki_url, headers=headers, timeout=DEFAULT_TIMEOUT)
     except RequestException as e:
         print(e)
         return
@@ -112,7 +112,7 @@ def main():
         print(f"ℹ Detected MediaWiki software")
 
         # Get API URL
-        api_url = get_mediawiki_api_url(response, headers=headers)
+        api_url = get_mediawiki_api_url(response, headers=headers, timeout=DEFAULT_TIMEOUT)
         if api_url is None:
             print(f"🗙 Unable to retrieve API from {response.url}")
             return
@@ -120,7 +120,7 @@ def main():
         # Retrieve wiki metadata
         print(f"🕑 Submitting queries to {api_url}")
         try:
-            wiki_metadata = profile_mediawiki_wiki(api_url, full_profile=True, rc_days_limit=30, headers=headers)
+            wiki_metadata = profile_mediawiki_wiki(api_url, full_profile=True, headers=headers, timeout=DEFAULT_TIMEOUT)
         except (RequestException, MediaWikiAPIError) as e:
             print(e)
             return
@@ -132,7 +132,8 @@ def main():
         base_url = urlunparse(urlparse(wiki_url)._replace(path=""))
         print(f"🕑 Submitting queries to {base_url}")
         try:
-            wiki_metadata = profile_fextralife_wiki(response, full_profile=True, rc_days_limit=30, headers=headers)
+            wiki_metadata = profile_fextralife_wiki(response, full_profile=True, headers=headers,
+                                                    timeout=DEFAULT_TIMEOUT)
         except RequestException as e:
             print(e)
             return
@@ -148,7 +149,7 @@ def main():
         base_url = urlunparse(urlparse(wiki_url)._replace(path=""))
         print(f"🕑 Submitting queries to {base_url}")
         try:
-            wiki_metadata = profile_dokuwiki_wiki(response, full_profile=True, rc_days_limit=30, headers=headers)
+            wiki_metadata = profile_dokuwiki_wiki(response, full_profile=True, headers=headers, timeout=DEFAULT_TIMEOUT)
         except RequestException as e:
             print(e)
             return

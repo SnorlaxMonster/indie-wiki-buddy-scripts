@@ -31,13 +31,13 @@ def parse_dokuwiki_page_id(page_id: str) -> tuple[Optional[str], Optional[str], 
 
 
 def retrieve_dokuwiki_sitemap(entry_url: str, session: Optional[requests.Session] = None,
-                              headers: Optional[dict] = None) -> Optional[pd.DataFrame]:
+                              **kwargs) -> Optional[pd.DataFrame]:
     """
     Retrieves a list of all pages on the specified wiki (and their namespaces) from its sitemap.
 
     :param entry_url: URL path to content-level PHP files (including doku.php)
     :param session: requests Session to use for resolving the URL
-    :param headers: Headers to include in the HTTP request (e.g. user-agent)
+    :param kwargs: kwargs to use for the HTTP requests
     :return: DataFrame of all pages on the wiki and their namespaces. If the sitemap cannot be retrieved, returns None.
     """
     # Create a new session if one was not provided
@@ -48,7 +48,7 @@ def retrieve_dokuwiki_sitemap(entry_url: str, session: Optional[requests.Session
     if not entry_url.endswith("/"):
         entry_url += "/"
     php_url = urljoin(entry_url, 'doku.php')
-    response = session.get(php_url, params={"do": "sitemap"}, headers=headers)
+    response = session.get(php_url, params={"do": "sitemap"}, **kwargs)
 
     # If the wiki does not have a sitemap configured (which is not uncommon), return None
     if not response:
@@ -72,14 +72,13 @@ def retrieve_dokuwiki_sitemap(entry_url: str, session: Optional[requests.Session
     return sitemap_df
 
 
-def retrieve_dokuwiki_index(entry_url, session: Optional[requests.Session] = None,
-                            headers: Optional[dict] = None) -> pd.DataFrame:
+def retrieve_dokuwiki_index(entry_url, session: Optional[requests.Session] = None, **kwargs) -> pd.DataFrame:
     """
     Retrieves a list of all pages on the specified wiki (and their namespaces) from its index page.
 
     :param entry_url: URL path to content-level PHP files (including doku.php)
     :param session: requests Session to use for resolving the URL
-    :param headers: Headers to include in the HTTP request (e.g. user-agent)
+    :param kwargs: kwargs to use for the HTTP requests
     :return:
     """
     # Create a new session if one was not provided
@@ -102,7 +101,7 @@ def retrieve_dokuwiki_index(entry_url, session: Optional[requests.Session] = Non
 
                 # Request the expanded directory
                 subdirectory_url = urljoin(entry_url, subdirectory_url_path)
-                subdirectory_response = session.get(subdirectory_url)
+                subdirectory_response = session.get(subdirectory_url, **kwargs)
 
                 # Select just the expanded directory, and parse its contents
                 subdirectory_tree = lxml.html.parse(BytesIO(subdirectory_response.content))
@@ -114,7 +113,7 @@ def retrieve_dokuwiki_index(entry_url, session: Optional[requests.Session] = Non
 
     # Request index page
     php_url = urljoin(entry_url, "doku.php")
-    response = session.get(php_url, params={"do": "index"}, headers=headers)
+    response = session.get(php_url, params={"do": "index"}, **kwargs)
     if not response:
         response.raise_for_status()
     html_tree = lxml.html.parse(BytesIO(response.content))
@@ -166,8 +165,7 @@ def get_action_from_dokuwiki_summary(summary):
 
 
 def retrieve_dokuwiki_recentchanges(entry_url: str, request_size: int = 1000,
-                                    session: Optional[requests.Session] = None,
-                                    headers: Optional[dict] = None) -> Optional[pd.DataFrame]:
+                                    session: Optional[requests.Session] = None, **kwargs) -> Optional[pd.DataFrame]:
     """
     Retrieve Recent Changes from a DokuWiki wiki within the specified time window.
 
@@ -178,7 +176,7 @@ def retrieve_dokuwiki_recentchanges(entry_url: str, request_size: int = 1000,
     :param entry_url: URL path to content-level PHP files (including feed.php)
     :param request_size: The number of entries to request
     :param session: requests Session to use for resolving the URL
-    :param headers: Headers to include in HTTP requests (e.g. user-agent)
+    :param kwargs: kwargs to use for the HTTP requests
     :return: DataFrame of Recent Changes
     """
     # Create a new session if one was not provided
@@ -187,8 +185,8 @@ def retrieve_dokuwiki_recentchanges(entry_url: str, request_size: int = 1000,
 
     # Request the Recent Changes feed
     feed_url = urljoin(entry_url, "feed.php")
-    response = session.get(feed_url, headers=headers, params={"num": request_size, "minor": str(int(True)),
-                                                               "mode": "recent"})
+    rc_params = {"num": request_size, "minor": str(int(True)), "mode": "recent"}
+    response = session.get(feed_url, params=rc_params, **kwargs)
     if not response:
         response.raise_for_status()
 
@@ -303,7 +301,7 @@ def get_dokuwiki_content_path(parsed_html: lxml.html.etree, response_url: str) -
 
 
 def profile_dokuwiki_wiki(wiki_page: str | requests.Response, full_profile: bool = True, rc_days_limit: int = 30,
-                          session: Optional[requests.Session] = None, headers: Optional[dict] = None) -> dict:
+                          session: Optional[requests.Session] = None, **kwargs) -> dict:
     """
     Given a URL or HTTP request response for a page of a DokuWiki wiki, retrieves key information about the wiki,
     including content and activity metrics.
@@ -312,7 +310,7 @@ def profile_dokuwiki_wiki(wiki_page: str | requests.Response, full_profile: bool
     :param full_profile: Whether to include activity and content metrics
     :param rc_days_limit: The number of days to look back when retrieving Recent Changes
     :param session: requests Session to use for resolving the URL
-    :param headers: Headers to include in HTTP requests (e.g. user-agent)
+    :param kwargs: kwargs to use for the HTTP requests
     :return: JSON-serializable dict of wiki metadata in standardized format
     """
     # Create a new session if one was not provided
@@ -320,7 +318,7 @@ def profile_dokuwiki_wiki(wiki_page: str | requests.Response, full_profile: bool
         session = requests.Session()
 
     # If provided a URL, run an HTTP request
-    input_page_response = resolve_wiki_page(wiki_page, session=session, headers=headers)
+    input_page_response = resolve_wiki_page(wiki_page, session=session, **kwargs)
 
     # Parse HTML
     input_page_html = lxml.html.parse(BytesIO(input_page_response.content))
@@ -329,7 +327,7 @@ def profile_dokuwiki_wiki(wiki_page: str | requests.Response, full_profile: bool
     # Get the manifest
     manifest_url_path = input_page_html.find('//link[@rel="manifest"]').get("href")
     manifest_url = urljoin(base_url_with_protocol, manifest_url_path)
-    manifest_response = session.get(manifest_url, headers=headers)
+    manifest_response = session.get(manifest_url, **kwargs)
     if not manifest_response:
         manifest_response.raise_for_status()
     manifest = manifest_response.json()
@@ -337,7 +335,7 @@ def profile_dokuwiki_wiki(wiki_page: str | requests.Response, full_profile: bool
     # Request the Main Page
     entry_url = urljoin(base_url_with_protocol, manifest.get("start_url"))
 
-    main_page_response = session.get(entry_url, headers=headers)
+    main_page_response = session.get(entry_url, **kwargs)
     if not main_page_response:
         main_page_response.raise_for_status()
     main_page_html = lxml.html.parse(BytesIO(main_page_response.content))
@@ -393,9 +391,9 @@ def profile_dokuwiki_wiki(wiki_page: str | requests.Response, full_profile: bool
     # the index requires a separate request for every namespace and subnamespace on the wiki,
     # so is substantially slower, especially for wikis with lots of namespaces.
     # However, many DokuWikis do not configure a sitemap, so the index fallback is still required.
-    page_df = retrieve_dokuwiki_sitemap(entry_url, session=session, headers=headers)
+    page_df = retrieve_dokuwiki_sitemap(entry_url, session=session, **kwargs)
     if page_df is None:
-        page_df = retrieve_dokuwiki_index(entry_url, session=session, headers=headers)
+        page_df = retrieve_dokuwiki_index(entry_url, session=session, **kwargs)
 
     # Count content pages
     content_pages = len(page_df[~page_df["root_namespace"].isin(non_content_namespaces)])
@@ -403,7 +401,7 @@ def profile_dokuwiki_wiki(wiki_page: str | requests.Response, full_profile: bool
 
     # Request Recent Changes
     window_end = datetime.datetime.now(datetime.timezone.utc) - datetime.timedelta(rc_days_limit)
-    rc_df = retrieve_dokuwiki_recentchanges(entry_url, session=session, headers=headers)
+    rc_df = retrieve_dokuwiki_recentchanges(entry_url, session=session, **kwargs)
     if rc_df is None:
         # If the Recent Changes request failed, fill the corresponding values with nulls
         wiki_metadata.update({"active_users": None, "recent_edit_count": None, "latest_edit_timestamp": None})

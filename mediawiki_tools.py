@@ -83,13 +83,13 @@ def get_mediawiki_favicon_url(parsed_html: lxml.html.etree) -> Optional[str]:
 
 
 def get_mediawiki_api_url(wiki_page: str | requests.Response, session: Optional[requests.Session] = None,
-                          headers: Optional[dict] = None) -> Optional[str]:
+                          **kwargs) -> Optional[str]:
     """
     Given a URL or HTTP response for a wiki page, determines the wiki's API URL.
 
     :param wiki_page: URL or HTTP response for a wiki page
     :param session: requests Session to use for resolving the URL
-    :param headers: Headers to include in the request (e.g. user-agent) if provided a URL
+    :param kwargs: kwargs to use for the HTTP requests
     :return: Wiki's API URL
     """
     # If provided an API URL, just return that URL
@@ -98,7 +98,7 @@ def get_mediawiki_api_url(wiki_page: str | requests.Response, session: Optional[
         return api_url
 
     # If provided a URL, run an HTTP request
-    response = resolve_wiki_page(wiki_page, session=session, headers=headers)
+    response = resolve_wiki_page(wiki_page, session=session, **kwargs)
 
     # Parse the HTML
     parsed_html = lxml.html.parse(BytesIO(response.content))
@@ -134,7 +134,7 @@ def get_mediawiki_api_url(wiki_page: str | requests.Response, session: Optional[
         fandom_url = get_fandom_url_from_breezewiki(response)
         if fandom_url is not None:
             print(f"ℹ {response.url} is a BreezeWiki site. Retrieving API URL from Fandom.")
-            return get_mediawiki_api_url(fandom_url, session=session, headers=headers)
+            return get_mediawiki_api_url(fandom_url, session=session, **kwargs)
 
     # Otherwise, the API URL retrieval has failed
     return None
@@ -208,7 +208,7 @@ def query_mediawiki_api(api_url: str, params: dict, session: Optional[requests.S
 
 
 def query_mediawiki_api_with_continue(api_url: str, params: dict, session: Optional[requests.Session] = None,
-                                      headers: Optional[dict] = None) -> Generator[dict, None, None]:
+                                      **kwargs) -> Generator[dict, None, None]:
     """
     Runs a MediaWiki API query with the specified parameters.
 
@@ -217,7 +217,7 @@ def query_mediawiki_api_with_continue(api_url: str, params: dict, session: Optio
     :param api_url: MediaWiki API URL
     :param params: params to use for HTTP requests
     :param session: requests Session to use for HTTP requests
-    :param headers: Headers to include in the request (e.g. user-agent)
+    :param kwargs: kwargs to use for the HTTP requests
     :return: Generator of API query results
     :raises: HTTPError: If the API request returns an HTTP error code
     :raises: MediaWikiAPIError: If the API query returns an error
@@ -235,7 +235,7 @@ def query_mediawiki_api_with_continue(api_url: str, params: dict, session: Optio
         # Modify it with the values returned in the 'continue' section of the last result.
         request_params.update(last_continue)
         # Call API
-        response = session.get(api_url, params=request_params, headers=headers)
+        response = session.get(api_url, params=request_params, **kwargs)
 
         # If the response is an error, raise an HTTPError
         if not response:
@@ -321,8 +321,7 @@ def extract_metadata_from_siteinfo(siteinfo: dict) -> dict:
 
 
 def retrieve_mediawiki_recentchanges(api_url: str, window_end: datetime.datetime, extra_params: Optional[dict] = None,
-                                     session: Optional[requests.Session] = None,
-                                     headers: Optional[dict] = None) -> pd.DataFrame:
+                                     session: Optional[requests.Session] = None, **kwargs) -> pd.DataFrame:
     """
     Returns the full set of Recent Changes back to a specific date.
     By default, it excludes bots and only includes page edits, page creations, and category additions.
@@ -331,7 +330,7 @@ def retrieve_mediawiki_recentchanges(api_url: str, window_end: datetime.datetime
     :param window_end: Date of the earliest Recent Changes entry to include
     :param extra_params: Parameters to include in the Recent Changes query, beyond the default values
     :param session: requests Session to use for HTTP requests
-    :param headers: Headers to include in HTTP requests (e.g. user-agent)
+    :param kwargs: kwargs to use for the HTTP requests
     :return: DataFrame of Recent Changes
     """
     # Prepare query params
@@ -345,7 +344,7 @@ def retrieve_mediawiki_recentchanges(api_url: str, window_end: datetime.datetime
 
     # Execute query, iterating over each continuation (MediaWiki typically returns up to 500 results per query)
     rc_contents = []
-    for result in query_mediawiki_api_with_continue(api_url, params=query_params, session=session, headers=headers):
+    for result in query_mediawiki_api_with_continue(api_url, params=query_params, session=session, **kwargs):
         rc_contents += result['recentchanges']
 
     rc_df = pd.DataFrame(rc_contents)
@@ -356,7 +355,7 @@ def retrieve_mediawiki_recentchanges(api_url: str, window_end: datetime.datetime
 
 def profile_mediawiki_recentchanges(api_url: str, rc_days_limit: int, siteinfo: dict,
                                     session: Optional[requests.Session] = None,
-                                    headers: Optional[dict] = None) -> tuple[int, Optional[datetime.datetime]]:
+                                    **kwargs) -> tuple[int, Optional[datetime.datetime]]:
     """
     Determines the number of content-namespace edits by humans to the wiki within the last X days,
     and the date of the most recent content-namespace edit by a human.
@@ -365,7 +364,7 @@ def profile_mediawiki_recentchanges(api_url: str, rc_days_limit: int, siteinfo: 
     :param rc_days_limit: The number of days to look back when retrieving Recent Changes
     :param siteinfo: Result of a previous MediaWiki siteinfo query
     :param session: requests Session to use for HTTP requests
-    :param headers: Headers to include in the request (e.g. user-agent)
+    :param kwargs: kwargs to use for the HTTP requests
     :return: number of edits in the time window, and timestamp of the last edit
     """
     # Calculate window_end
@@ -382,7 +381,7 @@ def profile_mediawiki_recentchanges(api_url: str, rc_days_limit: int, siteinfo: 
         "rcnamespace": '|'.join(str(ns) for ns in content_namespaces),
         "rcend": window_end.strftime('%Y-%m-%dT%H:%M:%SZ'),
     }
-    rc_df = retrieve_mediawiki_recentchanges(api_url, window_end, extra_params=extra_params, headers=headers)
+    rc_df = retrieve_mediawiki_recentchanges(api_url, window_end, extra_params=extra_params, **kwargs)
 
     # Count edits in the time window
     edit_count = len(rc_df)
@@ -396,7 +395,7 @@ def profile_mediawiki_recentchanges(api_url: str, rc_days_limit: int, siteinfo: 
         query_params = {'action': 'query', 'list': 'recentchanges', 'rcshow': '!bot', 'rclimit': 1,
                         'rctype': 'edit|new|categorize', "rcnamespace": '|'.join(str(ns) for ns in content_namespaces),
                         'format': 'json'}
-        rc_extended_result = query_mediawiki_api(api_url, query_params, session=session, headers=headers)
+        rc_extended_result = query_mediawiki_api(api_url, query_params, session=session, **kwargs)
 
         # Get the most recent edit from the Recent Changes result
         rc_extended_df = pd.DataFrame(rc_extended_result["recentchanges"])
@@ -409,7 +408,7 @@ def profile_mediawiki_recentchanges(api_url: str, rc_days_limit: int, siteinfo: 
 
 
 def profile_mediawiki_wiki(wiki_page: str | requests.Response, full_profile: bool = True, rc_days_limit: int = 30,
-                           session: Optional[requests.Session] = None, headers: Optional[dict] = None) -> dict:
+                           session: Optional[requests.Session] = None, **kwargs) -> dict:
     """
     Uses the MediaWiki API to retrieve key information about the specified MediaWiki site,
     including content and activity metrics.
@@ -418,7 +417,7 @@ def profile_mediawiki_wiki(wiki_page: str | requests.Response, full_profile: boo
     :param full_profile: Whether to include activity and content metrics
     :param rc_days_limit: The number of days to look back when retrieving Recent Changes
     :param session: requests Session to use for resolving the URL
-    :param headers: Headers to include in HTTP requests (e.g. user-agent)
+    :param kwargs: kwargs to use for the HTTP requests
     :return: JSON-serializable dict of wiki metadata in standardized format
     """
     # Create a new session if one was not provided
@@ -429,14 +428,14 @@ def profile_mediawiki_wiki(wiki_page: str | requests.Response, full_profile: boo
     if isinstance(wiki_page, str) and wiki_page.endswith("/api.php"):
         api_url = wiki_page
     else:
-        api_url = get_mediawiki_api_url(wiki_page, headers=headers)
+        api_url = get_mediawiki_api_url(wiki_page, **kwargs)
         if api_url is None:
             raise MediaWikiAPIError("Unable to determine MediaWiki API URL")
 
     # Request siteinfo data
     siteinfo_params = {'format': 'json', 'action': 'query', 'meta': 'siteinfo',
                        'siprop': 'general|namespaces|statistics|rightsinfo'}
-    siteinfo = query_mediawiki_api(api_url, params=siteinfo_params, session=session, headers=headers)
+    siteinfo = query_mediawiki_api(api_url, params=siteinfo_params, session=session, **kwargs)
 
     wiki_metadata = extract_metadata_from_siteinfo(siteinfo)
     if not full_profile:
@@ -444,7 +443,7 @@ def profile_mediawiki_wiki(wiki_page: str | requests.Response, full_profile: boo
 
     # Request recentchanges data
     recent_edit_count, latest_edit_timestamp = profile_mediawiki_recentchanges(api_url, rc_days_limit, siteinfo,
-                                                                               session=session, headers=headers)
+                                                                               session=session, **kwargs)
 
     # Extract data
     wiki_metadata.update({
