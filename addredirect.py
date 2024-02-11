@@ -454,8 +454,8 @@ def get_wiki_metadata_cli(site_class: str, key_properties: Iterable, session: Op
 
     # Resolve input URL
     wiki_url = ""
-    while wiki_url.strip() == "":
-        wiki_url = input(f"📥 Enter {site_class} wiki URL: ")
+    while wiki_url == "":
+        wiki_url = input(f"📥 Enter {site_class} wiki URL: ").strip()
     try:
         response = request_with_http_fallback(wiki_url, session=session, **kwargs)
     except RequestException as e:
@@ -494,7 +494,7 @@ def get_wiki_metadata_cli(site_class: str, key_properties: Iterable, session: Op
             if "icon_path" in key_properties:
                 icon_path = wiki_data.get("icon_path")
                 if icon_path is None:
-                    wiki_data["icon_path"] = get_mediawiki_favicon_url(parsed_html)
+                    wiki_data["icon_path"] = get_mediawiki_favicon_url(response)
 
         elif wiki_software == WikiSoftware.FEXTRALIFE:
             print(f"ℹ Detected Fextralife software")

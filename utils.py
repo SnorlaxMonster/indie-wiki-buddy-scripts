@@ -15,7 +15,7 @@ from typing import Optional, Iterable
 from urllib.parse import urlparse, urlunparse, ParseResult as UrlParseResult
 
 USER_CONFIG_PATH = "user_config.json"
-DEFAULT_TIMEOUT = 1  # seconds
+DEFAULT_TIMEOUT = 30  # seconds
 
 
 class WikiSoftware(Enum):

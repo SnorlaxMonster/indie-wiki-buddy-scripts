@@ -1,4 +1,4 @@
-import json
+﻿import json
 import warnings
 
 import lxml.html
@@ -140,13 +140,15 @@ def main():
     # Take site URL as input
     wiki_url = ""
     while wiki_url.strip() == "":
-        wiki_url = input(f"📥 Enter wiki URL: ")
+        wiki_url = input(f"📥 Enter wiki URL: ").strip()
     wiki_url = normalize_wikia_url(normalize_url_protocol(wiki_url))
 
     # Detect wiki software
     print(f"🕑 Resolving {wiki_url}")
     try:
         response = request_with_http_fallback(wiki_url, headers=headers, timeout=timeout)
+        if not response:
+            response.raise_for_status()
     except RequestException as e:
         print(e)
         return

@@ -64,13 +64,24 @@ def extract_mediawiki_version(generator_string: str) -> str:
     return match.group(1)
 
 
-def get_mediawiki_favicon_url(parsed_html: lxml.html.etree) -> Optional[str]:
+def get_mediawiki_favicon_url(wiki_page: str | requests.Response, session: Optional[requests.Session] = None,
+                              **kwargs) -> Optional[str]:
     """
     Given an HTTP response for a MediaWiki page, determines the wiki's favicon's URL.
 
-    :param parsed_html: Parsed HTML for a wiki page
+    :param wiki_page: MediaWiki wiki page URL or HTTP request response
+    :param session: requests Session to use for resolving the URL
+    :param kwargs: kwargs to use for the HTTP requests
     :return: Favicon URL
     """
+    # Create a new session if one was not provided
+    if session is None:
+        session = requests.Session()
+
+    # Parse the page HTML
+    response = resolve_wiki_page(wiki_page, session=session, **kwargs)
+    parsed_html = lxml.html.parse(BytesIO(response.content))
+
     # Find the icon element in the HTML
     icon_link_element = parsed_html.find('//link[@rel="shortcut icon"]')
     if icon_link_element is None:
@@ -84,9 +95,7 @@ def get_mediawiki_favicon_url(parsed_html: lxml.html.etree) -> Optional[str]:
         return None
 
     # Retrieve the page's URL
-    page_url = extract_xpath_property(parsed_html, '//meta[@property="og:url"]', "content")
-
-    return ensure_absolute_url(icon_url, page_url)
+    return ensure_absolute_url(icon_url, response.url)
 
 
 def get_mediawiki_api_url(wiki_page: str | requests.Response, session: Optional[requests.Session] = None,
@@ -350,9 +359,12 @@ def extract_metadata_from_siteinfo(siteinfo: dict) -> dict:
 
     # Get favicon path
     favicon_path = siteinfo["general"].get("favicon")  # Not guaranteed to be present
-    if favicon_path is not None and favicon_path.startswith("$"):
+    if favicon_path is not None:
         # On Fandom, the API's favicon URL path starts with $wgUploadPath. For now, just ignore these kinds of paths.
-        favicon_path = None
+        if favicon_path.startswith("$"):
+            favicon_path = None
+        else:
+            favicon_path = ensure_absolute_url(favicon_path, siteinfo["general"]["base"])
 
     # Return extracted properties
     wiki_metadata = {
@@ -509,6 +521,15 @@ def profile_mediawiki_wiki(wiki_page: str | requests.Response, full_profile: boo
     # If the search path was not retrieved, manually derive it from the API URL
     if wiki_metadata.get("search_path") is None:
         wiki_metadata["search_path"] = urlparse(api_url).path.replace("/api.php", "/index.php")
+
+    # If the icon URL was not found via the standard method, try to find it from the HTML
+    if wiki_metadata.get("icon_path") is None:
+        if wiki_page != api_url:
+            wiki_metadata["icon_path"] = get_mediawiki_favicon_url(wiki_page)
+        else:
+            full_content_path = str(urlunparse((wiki_metadata["protocol"], wiki_metadata["base_url"],
+                                                wiki_metadata["content_path"], '', '', '')))
+            wiki_metadata["icon_path"] = get_mediawiki_favicon_url(full_content_path)
 
     if not full_profile:
         return wiki_metadata
