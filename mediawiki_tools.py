@@ -23,6 +23,13 @@ class MediaWikiAPIError(Exception):
     pass
 
 
+class MediaWikiAPIWarning(Warning):
+    """
+    Warnings returned by the MediaWiki API
+    """
+    pass
+
+
 def normalize_wikia_url(original_url: str) -> str:
     """
     Old Wikia URLs included the language as a subdomain for non-English wikis, but these URLs no longer work.
@@ -166,6 +173,12 @@ def get_fandom_url_from_breezewiki(response: Optional[requests.Response]) -> Opt
         return None
 
 
+def print_api_warnings(api_warnings: dict):
+    for warning_group_name, warning_group in api_warnings.items():
+        for warning_entry in warning_group.values():
+            warnings.warn(f"{warning_group_name}: {warning_entry}", MediaWikiAPIWarning)
+
+
 def query_mediawiki_api(api_url: str, params: dict, session: Optional[requests.Session] = None, **kwargs) -> dict:
     """
     Runs a MediaWiki API query with the specified parameters.
@@ -202,7 +215,7 @@ def query_mediawiki_api(api_url: str, params: dict, session: Optional[requests.S
     if 'error' in result:
         raise MediaWikiAPIError(result['error'])
     if 'warnings' in result:
-        warnings.warn(result['warnings'])
+        print_api_warnings(result['warnings'])
 
     return result['query']
 
@@ -247,7 +260,7 @@ def query_mediawiki_api_with_continue(api_url: str, params: dict, session: Optio
         if 'error' in result:
             raise MediaWikiAPIError(result['error'])
         if 'warnings' in result:
-            warnings.warn(result['warnings'])
+            print_api_warnings(result['warnings'])
         if 'query' in result:
             yield result['query']
         if 'continue' not in result:
@@ -333,9 +346,12 @@ def retrieve_mediawiki_recentchanges(api_url: str, window_end: datetime.datetime
     :param kwargs: kwargs to use for the HTTP requests
     :return: DataFrame of Recent Changes
     """
+    # TODO: Handle wikis using a timezone other than UTC (requires an example to test against)
+    if window_end.tzinfo != timezone.utc:
+        raise NotImplementedError("Wikis with a timezone other than UTC are not currently supported")
+
     # Prepare query params
     # NOTE: The MediaWiki API is very particular about date formats. Timezone must be written in Z format.
-    assert window_end.tzinfo == datetime.timezone.utc  # TODO: Handle wikis using a timezone other than UTC
     rcend = window_end.strftime('%Y-%m-%dT%H:%M:%SZ')
     query_params = {'action': 'query', 'list': 'recentchanges', 'rcshow': '!bot', 'rclimit': 'max', 'rcend': rcend,
                     'rctype': 'edit|new|categorize', 'format': 'json'}
@@ -441,7 +457,7 @@ def profile_mediawiki_wiki(wiki_page: str | requests.Response, full_profile: boo
     if not full_profile:
         return wiki_metadata
 
-    # Request recentchanges data
+    # Retrieve Recent Changes
     recent_edit_count, latest_edit_timestamp = profile_mediawiki_recentchanges(api_url, rc_days_limit, siteinfo,
                                                                                session=session, **kwargs)
 
