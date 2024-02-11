@@ -1,13 +1,13 @@
 """
 Python script for generating metadata about wikis
 """
-import datetime
 import lxml.html
 import pandas as pd
 import re
 import requests
 import time
 import warnings
+from datetime import datetime, timedelta, timezone
 from io import BytesIO
 from typing import Optional, Generator
 from urllib.parse import urlparse, urlunparse, urljoin
@@ -333,7 +333,7 @@ def extract_metadata_from_siteinfo(siteinfo: dict) -> dict:
     return wiki_metadata
 
 
-def retrieve_mediawiki_recentchanges(api_url: str, window_end: datetime.datetime, extra_params: Optional[dict] = None,
+def retrieve_mediawiki_recentchanges(api_url: str, window_end: datetime, extra_params: Optional[dict] = None,
                                      session: Optional[requests.Session] = None, **kwargs) -> pd.DataFrame:
     """
     Returns the full set of Recent Changes back to a specific date.
@@ -371,7 +371,7 @@ def retrieve_mediawiki_recentchanges(api_url: str, window_end: datetime.datetime
 
 def profile_mediawiki_recentchanges(api_url: str, rc_days_limit: int, siteinfo: dict,
                                     session: Optional[requests.Session] = None,
-                                    **kwargs) -> tuple[int, Optional[datetime.datetime]]:
+                                    **kwargs) -> tuple[int, Optional[datetime]]:
     """
     Determines the number of content-namespace edits by humans to the wiki within the last X days,
     and the date of the most recent content-namespace edit by a human.
@@ -384,9 +384,9 @@ def profile_mediawiki_recentchanges(api_url: str, rc_days_limit: int, siteinfo: 
     :return: number of edits in the time window, and timestamp of the last edit
     """
     # Calculate window_end
-    #current_timestamp = datetime.datetime.fromisoformat(siteinfo["general"]["time"])  # Not supported until Python 3.11
-    current_timestamp = datetime.datetime.strptime(siteinfo["general"]["time"], '%Y-%m-%dT%H:%M:%S%z')
-    window_end = current_timestamp - datetime.timedelta(rc_days_limit)
+    #current_timestamp = datetime.fromisoformat(siteinfo["general"]["time"])  # Not supported until Python 3.11
+    current_timestamp = datetime.strptime(siteinfo["general"]["time"], '%Y-%m-%dT%H:%M:%S%z')
+    window_end = current_timestamp - timedelta(rc_days_limit)
 
     # Determine content namespaces
     content_namespaces = [entry.get('id') for entry in siteinfo["namespaces"].values()

@@ -19,6 +19,7 @@ from mediawiki_tools import (get_mediawiki_api_url, query_mediawiki_api, get_med
                              extract_metadata_from_siteinfo, MediaWikiAPIError)
 from fextralife_tools import extract_metadata_from_fextralife_page
 from dokuwiki_tools import profile_dokuwiki_wiki
+from wikidot_tools import profile_wikidot_wiki
 from profilewiki import profile_wiki, determine_wiki_software
 
 
@@ -500,6 +501,11 @@ def get_wiki_metadata_cli(site_class: str, key_properties: Iterable, session: Op
             print(f"ℹ Detected DokuWiki software")
             print(f"🕑 Getting {site_class} wiki info...")
             wiki_data = profile_dokuwiki_wiki(response, full_profile=False, session=session, **kwargs)
+
+        elif wiki_software == WikiSoftware.WIKIDOT:
+            print(f"ℹ Detected Wikidot software")
+            print(f"🕑 Getting {site_class} wiki info...")
+            wiki_data = profile_wikidot_wiki(response, full_profile=False, session=session, **kwargs)
 
         else:
             print(f"⚠ {wiki_url} uses currently unsupported software. Details will need to be entered manually.")

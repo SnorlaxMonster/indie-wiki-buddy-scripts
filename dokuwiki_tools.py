@@ -1,16 +1,15 @@
-import datetime
 import pandas as pd
 import requests
 import lxml.etree
 import lxml.html
 import re
 import feedparser
-import gzip
+from datetime import datetime, timedelta, timezone
 from io import BytesIO
 from urllib.parse import urlparse, urljoin, parse_qsl
 from typing import Optional
 
-from utils import extract_base_url, ensure_absolute_url, resolve_wiki_page
+from utils import extract_base_url, ensure_absolute_url, resolve_wiki_page, retrieve_sitemap
 
 
 def parse_dokuwiki_page_id(page_id: str) -> tuple[Optional[str], Optional[str], str]:
@@ -30,46 +29,32 @@ def parse_dokuwiki_page_id(page_id: str) -> tuple[Optional[str], Optional[str], 
         return None, None, page_id
 
 
-def retrieve_dokuwiki_sitemap(entry_url: str, session: Optional[requests.Session] = None,
-                              **kwargs) -> Optional[pd.DataFrame]:
+def retrieve_pages_from_dokuwiki_sitemap(entry_url: str, session: Optional[requests.Session] = None,
+                                         **kwargs) -> Optional[pd.DataFrame]:
     """
-    Retrieves a list of all pages on the specified wiki (and their namespaces) from its sitemap.
+    Retrieves a list of all pages on the specified DokuWiki wiki (and their namespaces) from its sitemap.
 
     :param entry_url: URL path to content-level PHP files (including doku.php)
     :param session: requests Session to use for resolving the URL
     :param kwargs: kwargs to use for the HTTP requests
     :return: DataFrame of all pages on the wiki and their namespaces. If the sitemap cannot be retrieved, returns None.
     """
-    # Create a new session if one was not provided
-    if session is None:
-        session = requests.Session()
-
-    # Request sitemap
+    # Construct sitemap URL
     if not entry_url.endswith("/"):
         entry_url += "/"
-    php_url = urljoin(entry_url, 'doku.php')
-    response = session.get(php_url, params={"do": "sitemap"}, **kwargs)
+    sitemap_url = urljoin(entry_url, 'doku.php?do=sitemap')
 
-    # If the wiki does not have a sitemap configured (which is not uncommon), return None
-    if not response:
+    # Retrieve the sitemap
+    sitemap_df = retrieve_sitemap(sitemap_url, ignore_errors=True, session=session, **kwargs)
+    if sitemap_df is None:
         return None
 
-    # Unpack the sitemap
-    sitemap_contenttype = response.headers["Content-Type"]
-    if sitemap_contenttype == 'application/x-gzip':
-        sitemap_raw = gzip.decompress(response.content)
-    else:
-        print(f"🗙 Unknown sitemap content-type {sitemap_contenttype}")
-        return None
+    # Extract page titles from the URLs
+    sitemap_titles = sitemap_df["loc"].str.removeprefix(entry_url).replace('/', ':')
+    title_df = pd.DataFrame(sitemap_titles.apply(parse_dokuwiki_page_id),
+                            columns=["root_namespace", "full_namespace", "base_page_id"])
 
-    # Parse sitemap XML
-    sitemap_xml = lxml.etree.fromstring(sitemap_raw)
-    sitemap_urls = [loc.text for loc in sitemap_xml.xpath("//*[local-name() = 'loc']")]
-    sitemap_titles = [parse_dokuwiki_page_id(url.removeprefix(entry_url).replace('/', ':')) for url in sitemap_urls]
-
-    sitemap_df = pd.DataFrame(sitemap_titles, columns=["root_namespace", "full_namespace", "base_page_id"])
-
-    return sitemap_df
+    return title_df
 
 
 def retrieve_dokuwiki_index(entry_url, session: Optional[requests.Session] = None, **kwargs) -> pd.DataFrame:
@@ -167,11 +152,7 @@ def get_action_from_dokuwiki_summary(summary):
 def retrieve_dokuwiki_recentchanges(entry_url: str, request_size: int = 1000,
                                     session: Optional[requests.Session] = None, **kwargs) -> Optional[pd.DataFrame]:
     """
-    Retrieve Recent Changes from a DokuWiki wiki within the specified time window.
-
-    Results outside the window will typically be included at the end of the table.
-    They are not filtered out in order to allow checking the most recent edit's timestamp, even if it is outside the
-    window.
+    Retrieve Recent Changes from a DokuWiki wiki.
 
     :param entry_url: URL path to content-level PHP files (including feed.php)
     :param request_size: The number of entries to request
@@ -257,9 +238,9 @@ def get_dokuwiki_content_path_from_url(page_url: Optional[str], page_id: str) ->
     else:
         return None
 
-    # Remove the scheme and netloc from the content_path
-    base_url = extract_base_url(page_url)
-    content_path = full_content_path.removeprefix(base_url)
+    # Remove the scheme and hostname from the content_path
+    base_url_with_protocol = extract_base_url(page_url)
+    content_path = full_content_path.removeprefix(base_url_with_protocol)
 
     return content_path
 
@@ -391,7 +372,7 @@ def profile_dokuwiki_wiki(wiki_page: str | requests.Response, full_profile: bool
     # the index requires a separate request for every namespace and subnamespace on the wiki,
     # so is substantially slower, especially for wikis with lots of namespaces.
     # However, many DokuWikis do not configure a sitemap, so the index fallback is still required.
-    page_df = retrieve_dokuwiki_sitemap(entry_url, session=session, **kwargs)
+    page_df = retrieve_pages_from_dokuwiki_sitemap(entry_url, session=session, **kwargs)
     if page_df is None:
         page_df = retrieve_dokuwiki_index(entry_url, session=session, **kwargs)
 
@@ -400,7 +381,7 @@ def profile_dokuwiki_wiki(wiki_page: str | requests.Response, full_profile: bool
     wiki_metadata.update({"content_pages": content_pages})
 
     # Request Recent Changes
-    window_end = datetime.datetime.now(datetime.timezone.utc) - datetime.timedelta(rc_days_limit)
+    window_end = datetime.now(timezone.utc) - timedelta(rc_days_limit)
     rc_df = retrieve_dokuwiki_recentchanges(entry_url, session=session, **kwargs)
     if rc_df is None:
         # If the Recent Changes request failed, fill the corresponding values with nulls
@@ -415,7 +396,7 @@ def profile_dokuwiki_wiki(wiki_page: str | requests.Response, full_profile: bool
 
     # Extract data
     wiki_metadata.update({
-        # Active users are registered users who have performed any action in the past 30 days
+        # Active users are registered users who have performed any action in the past 30 days (including bots)
         "active_users": len(active_users),
         # Number of content edits made in the past 30 days
         "recent_edit_count": len(content_edits_df[content_edits_df["published"] > window_end]),

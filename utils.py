@@ -1,11 +1,15 @@
 """
 Python script for scraping metadata from wikis
 """
+import gzip
 import json
+import lxml.etree
 import lxml.html
 import os
+import pandas as pd
 import requests
 from enum import Enum
+from io import BytesIO
 from requests.exceptions import SSLError
 from typing import Optional, Iterable
 from urllib.parse import urlparse, urlunparse, ParseResult as UrlParseResult
@@ -18,9 +22,16 @@ class WikiSoftware(Enum):
     MEDIAWIKI = 1
     FEXTRALIFE = 2
     DOKUWIKI = 3
+    WIKIDOT = 4
 
 
-def extract_base_url(input_url):
+def extract_base_url(input_url: str):
+    """
+    Extracts the protocol (scheme) and domain (netloc) of the input URL.
+
+    :param input_url: URL to extract from
+    :return: URL consisting of just the scheme and netloc
+    """
     parsed_input_url = urlparse(input_url)
     return urlunparse((parsed_input_url.scheme, parsed_input_url.netloc, '', '', '', ''))
 
@@ -191,3 +202,65 @@ def update_user_config(key, value):
             user_config = dict()
         user_config[key] = value
         json.dump(user_config, user_config_file, indent=2, ensure_ascii=False)
+
+
+def retrieve_sitemap(sitemap_url, ignore_errors: bool = False, session: Optional[requests.Session] = None,
+                     **kwargs) -> Optional[pd.DataFrame]:
+    """
+    Retrieve the sitemap and parse it as a DataFrame.
+
+    :param sitemap_url: URL for the sitemap
+    :param ignore_errors: If the sitemap returns an error, whether to raise an exception (False) or return None (True)
+    :param session: requests Session to use for resolving the URL
+    :param kwargs: kwargs to use for the HTTP requests
+    :return: DataFrame of the sitemap's contents
+    """
+    # Create a new session if one was not provided
+    if session is None:
+        session = requests.Session()
+
+    # Request sitemap
+    try:
+        response = session.get(sitemap_url, **kwargs)
+    # If the connection failed, close the session and try again (this is mostly relevant for HTTP connections)
+    except requests.exceptions.ConnectionError:
+        session.close()
+        response = session.get(sitemap_url, **kwargs)
+
+    if not response:
+        if ignore_errors:
+            return None
+        else:
+            response.raise_for_status()
+
+    # Parse content as XML
+    sitemap_contenttype = response.headers["Content-Type"]
+    if sitemap_contenttype == "application/x-gzip":
+        sitemap_raw = gzip.decompress(response.content)
+    else:
+        # Wikidot's sitemap is an XML file whose Content-Type mislabels it as an HTML file
+        # If the Content-Type is not gzip, just assume it is XML
+        sitemap_raw = response.content
+    parsed_xml = lxml.etree.parse(BytesIO(sitemap_raw))
+
+    # Convert URLs on the current page to DataFrame
+    sitemap_df = pd.DataFrame([{lxml.etree.QName(elem).localname: elem.text for elem in url}
+                               for url in parsed_xml.xpath('//*[local-name() = "url"]')])
+
+    # Get URLs from paginated sitemaps
+    sub_sitemaps_list = parsed_xml.xpath('//*[local-name() = "sitemap"]/*[local-name() = "loc"]')
+    if len(sub_sitemaps_list) > 0:
+        sub_sitemap_df_list = []
+        for sub_sitemap_elem in sub_sitemaps_list:
+            sub_sitemap_df = retrieve_sitemap(sub_sitemap_elem.text, ignore_errors=ignore_errors, session=session,
+                                              **kwargs)
+            sub_sitemap_df["sitemap_page"] = sub_sitemap_elem.text
+            sub_sitemap_df_list.append(sub_sitemap_df)
+        sitemap_df = pd.concat([sitemap_df, *sub_sitemap_df_list])
+
+    # Parse "lastmod"
+    if "lastmod" in sitemap_df.columns:
+        # utc=True ensures that all times are converted to UTC (DokuWiki has variable timezones in sitemaps)
+        sitemap_df["lastmod"] = pd.to_datetime(sitemap_df["lastmod"], utc=True)
+
+    return sitemap_df

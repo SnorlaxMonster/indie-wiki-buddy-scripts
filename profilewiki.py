@@ -1,4 +1,6 @@
 import json
+import warnings
+
 import lxml.html
 from io import BytesIO
 from requests import Session
@@ -11,13 +13,24 @@ from utils import (normalize_url_protocol, request_with_http_fallback, extract_x
 from mediawiki_tools import get_mediawiki_api_url, profile_mediawiki_wiki, normalize_wikia_url, MediaWikiAPIError
 from fextralife_tools import profile_fextralife_wiki
 from dokuwiki_tools import profile_dokuwiki_wiki
+from wikidot_tools import profile_wikidot_wiki
 
 
-def determine_wiki_software(parsed_html: lxml.html.etree) -> Optional[WikiSoftware]:
+def determine_wiki_software_from_url(url: str) -> Optional[WikiSoftware]:
+    parsed_url = urlparse(url)
+    if parsed_url.hostname.endswith("fextralife.com"):
+        return WikiSoftware.FEXTRALIFE
+    if parsed_url.hostname.endswith("wikidot.com"):
+        return WikiSoftware.WIKIDOT
+    return None
+
+
+def determine_wiki_software(parsed_html: lxml.html.etree, response_url: Optional[str] = None) -> Optional[WikiSoftware]:
     """
     Determines what software the specified wiki is running
 
     :param parsed_html: Parsed HTML for a wiki page
+    :param response_url: URL of the wiki page
     :return: Software the wiki runs on
     """
     # Check the generator meta element
@@ -28,12 +41,36 @@ def determine_wiki_software(parsed_html: lxml.html.etree) -> Optional[WikiSoftwa
         elif generator == "DokuWiki":
             return WikiSoftware.DOKUWIKI
 
+    # If provided a URL, check it directly
+    if response_url is not None:
+        url_software = determine_wiki_software_from_url(response_url)
+        if url_software is not None:
+            return url_software
+
     # Check the wiki's URL via URL meta element
     meta_url = extract_xpath_property(parsed_html, '//meta[@property="og:url"]', "content")
     if meta_url is not None:
-        parsed_url = urlparse(meta_url)
-        if parsed_url.hostname.endswith("fextralife.com"):
-            return WikiSoftware.FEXTRALIFE
+        url_software = determine_wiki_software_from_url(meta_url)
+        if url_software is not None:
+            return url_software
+
+    # Try to find the WIKIREQUEST.info definition of a Wikidot site
+    wikirequest_info_script_candidates = parsed_html.xpath('//script[contains(text(), "WIKIREQUEST.info")]')
+    if len(wikirequest_info_script_candidates) != 0:
+        wikirequest_info_script = wikirequest_info_script_candidates[0]
+        if "var URL_DOMAIN = 'wikidot.com';" in wikirequest_info_script.text:
+            return WikiSoftware.WIKIDOT
+        else:
+            warnings.warn("The page has WIKIREQUEST.info like a Wikidot wiki, "
+                          "but does not list wikidot.com as its domain.\n"
+                          "The site has been presumed to be a Wikidot site hosted at a custom URL, "
+                          "but this case is not currently officially supported.")
+            return WikiSoftware.WIKIDOT
+
+    if meta_url is not None:
+        url_software = determine_wiki_software_from_url(meta_url)
+        if url_software is not None:
+            return url_software
 
     # Check the class on the body element (necessary for BreezeWiki)
     body_class = extract_xpath_property(parsed_html, 'body', "class")
@@ -83,6 +120,8 @@ def profile_wiki(wiki_url: str, full_profile: bool = True, session: Optional[Ses
         return profile_fextralife_wiki(response, full_profile=full_profile, session=session, **kwargs)
     elif wiki_software == WikiSoftware.DOKUWIKI:
         return profile_dokuwiki_wiki(response, full_profile=full_profile, session=session, **kwargs)
+    elif wiki_software == WikiSoftware.WIKIDOT:
+        return profile_wikidot_wiki(response, full_profile=full_profile, session=session, **kwargs)
     else:
         return None
 
@@ -150,6 +189,18 @@ def main():
         print(f"🕑 Submitting queries to {base_url}")
         try:
             wiki_metadata = profile_dokuwiki_wiki(response, full_profile=True, headers=headers, timeout=DEFAULT_TIMEOUT)
+        except RequestException as e:
+            print(e)
+            return
+
+    elif wiki_software == WikiSoftware.WIKIDOT:
+        print(f"ℹ Detected Wikidot software")
+
+        # Retrieve wiki metadata
+        base_url = urlunparse(urlparse(wiki_url)._replace(path=""))
+        print(f"🕑 Submitting queries to {base_url}")
+        try:
+            wiki_metadata = profile_wikidot_wiki(response, full_profile=True, headers=headers, timeout=None)
         except RequestException as e:
             print(e)
             return
