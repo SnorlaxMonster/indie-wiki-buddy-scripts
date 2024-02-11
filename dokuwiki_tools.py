@@ -40,9 +40,7 @@ def retrieve_pages_from_dokuwiki_sitemap(entry_url: str, session: Optional[reque
     :return: DataFrame of all pages on the wiki and their namespaces. If the sitemap cannot be retrieved, returns None.
     """
     # Construct sitemap URL
-    if not entry_url.endswith("/"):
-        entry_url += "/"
-    sitemap_url = urljoin(entry_url, 'doku.php?do=sitemap')
+    sitemap_url = entry_url.removesuffix("/") + "/doku.php?do=sitemap"
 
     # Retrieve the sitemap
     sitemap_df = retrieve_sitemap(sitemap_url, ignore_errors=True, session=session, **kwargs)
@@ -50,7 +48,7 @@ def retrieve_pages_from_dokuwiki_sitemap(entry_url: str, session: Optional[reque
         return None
 
     # Extract page titles from the URLs
-    sitemap_titles = sitemap_df["loc"].str.removeprefix(entry_url).replace('/', ':')
+    sitemap_titles = sitemap_df["loc"].apply(lambda url: urlparse(url).path.removeprefix("/")).replace('/', ':')
     title_df = pd.DataFrame(sitemap_titles.apply(parse_dokuwiki_page_id),
                             columns=["root_namespace", "full_namespace", "base_page_id"])
 
@@ -97,7 +95,7 @@ def retrieve_dokuwiki_index(entry_url, session: Optional[requests.Session] = Non
         return parsed_entries
 
     # Request index page
-    php_url = urljoin(entry_url, "doku.php")
+    php_url = entry_url.removesuffix("/") + "/doku.php"
     response = session.get(php_url, params={"do": "index"}, **kwargs)
     if not response:
         response.raise_for_status()
@@ -165,7 +163,7 @@ def retrieve_dokuwiki_recentchanges(entry_url: str, request_size: int = 1000,
         session = requests.Session()
 
     # Request the Recent Changes feed
-    feed_url = urljoin(entry_url, "feed.php")
+    feed_url = entry_url.removesuffix("/") + "/feed.php"
     rc_params = {"num": request_size, "minor": str(int(True)), "mode": "recent"}
     response = session.get(feed_url, params=rc_params, **kwargs)
     if not response:
@@ -352,7 +350,7 @@ def profile_dokuwiki_wiki(wiki_page: str | requests.Response, full_profile: bool
         "protocol": urlparse(input_page_response.url).scheme,
         "main_page": main_page_id,
         "content_path": content_path,
-        "search_path": urljoin(entry_url, "doku.php"),
+        "search_path": entry_url.removesuffix("/") + "/doku.php",
         "icon_path": ensure_absolute_url(icon_url, base_url_with_protocol),
 
         # Licensing

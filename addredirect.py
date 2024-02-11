@@ -10,17 +10,17 @@ import unicodedata
 from io import BytesIO
 from PIL import Image
 from urllib.parse import urlparse
-from requests.exceptions import HTTPError, SSLError
+from requests.exceptions import RequestException
 from typing import Optional, Iterable
 
 from utils import (normalize_url_protocol, request_with_http_fallback, WikiSoftware, read_user_config,
                    update_user_config, DEFAULT_TIMEOUT)
+from profilewiki import profile_wiki, determine_wiki_software
 from mediawiki_tools import (get_mediawiki_api_url, query_mediawiki_api, get_mediawiki_favicon_url,
                              extract_metadata_from_siteinfo, MediaWikiAPIError)
 from fextralife_tools import extract_metadata_from_fextralife_page
 from dokuwiki_tools import profile_dokuwiki_wiki
 from wikidot_tools import profile_wikidot_wiki
-from profilewiki import profile_wiki, determine_wiki_software
 
 
 def extract_topic_from_url(wiki_url: str) -> str:
@@ -368,7 +368,7 @@ def add_redirect_entry_from_url(origin_wiki_url: str, destination_wiki_url: str,
         if destination_site_metadata is None:
             print(f"🗙 ERROR: Unable to retrieve metadata from {destination_wiki_url}")
 
-    except (HTTPError, ConnectionError, SSLError, MediaWikiAPIError) as e:
+    except (RequestException, MediaWikiAPIError) as e:
         print(e)
         return None
 
@@ -458,7 +458,7 @@ def get_wiki_metadata_cli(site_class: str, key_properties: Iterable, session: Op
         wiki_url = input(f"📥 Enter {site_class} wiki URL: ")
     try:
         response = request_with_http_fallback(wiki_url, session=session, **kwargs)
-    except (SSLError, ConnectionError) as e:
+    except RequestException as e:
         print(e)
         response = None
 
@@ -485,6 +485,10 @@ def get_wiki_metadata_cli(site_class: str, key_properties: Iterable, session: Op
             siteinfo_params = {'action': 'query', 'meta': 'siteinfo', 'siprop': 'general', 'format': 'json'}
             siteinfo = query_mediawiki_api(api_url, params=siteinfo_params, session=session, **kwargs)
             wiki_data = extract_metadata_from_siteinfo(siteinfo)
+
+            # If the search path was not retrieved, manually derive it from the API URL
+            if wiki_data.get("search_path") is None:
+                wiki_data["search_path"] = urlparse(api_url).path.replace("/api.php", "index.php")
 
             # If the icon URL was not found via the standard method, try to find it from the HTML
             if "icon_path" in key_properties:

@@ -200,7 +200,7 @@ def profile_fextralife_wiki(wiki_page: str | requests.Response, full_profile: bo
         return wiki_metadata
 
     # Request the sitemap
-    sitemap_url = urljoin(base_url, 'sitemap.xml')
+    sitemap_url = base_url.removesuffix("/") + '/sitemap.xml'
     sitemap = retrieve_sitemap(sitemap_url, session=session, **kwargs)
 
     # Request Recent Changes

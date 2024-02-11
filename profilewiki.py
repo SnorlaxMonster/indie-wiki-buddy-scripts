@@ -82,6 +82,12 @@ def determine_wiki_software(parsed_html: lxml.html.etree, response_url: Optional
     content_elem = parsed_html.find('//div[@id="mw-content-text"]/div[@class="mw-parser-output"]')
     if content_elem is not None:
         return WikiSoftware.MEDIAWIKI
+    
+    # Check if the page is the MediaWiki API (will be detected earlier unless it is an ancient version of MediaWiki)
+    title_elem = parsed_html.find("//title")
+    if title_elem is not None:
+        if title_elem.text == "MediaWiki API":
+            return WikiSoftware.MEDIAWIKI
 
     # Unable to determine the wiki's software
     return None
@@ -129,7 +135,8 @@ def profile_wiki(wiki_url: str, full_profile: bool = True, session: Optional[Ses
 def main():
     # Get User-Agent from user config file (case-sensitive key, unlike the HTTP header)
     headers = {'User-Agent': read_user_config("User-Agent")}
-
+    timeout = DEFAULT_TIMEOUT
+    
     # Take site URL as input
     wiki_url = ""
     while wiki_url.strip() == "":
@@ -139,7 +146,7 @@ def main():
     # Detect wiki software
     print(f"🕑 Resolving {wiki_url}")
     try:
-        response = request_with_http_fallback(wiki_url, headers=headers, timeout=DEFAULT_TIMEOUT)
+        response = request_with_http_fallback(wiki_url, headers=headers, timeout=timeout)
     except RequestException as e:
         print(e)
         return
@@ -151,7 +158,7 @@ def main():
         print(f"ℹ Detected MediaWiki software")
 
         # Get API URL
-        api_url = get_mediawiki_api_url(response, headers=headers, timeout=DEFAULT_TIMEOUT)
+        api_url = get_mediawiki_api_url(response, headers=headers, timeout=timeout)
         if api_url is None:
             print(f"🗙 Unable to retrieve API from {response.url}")
             return
@@ -159,7 +166,7 @@ def main():
         # Retrieve wiki metadata
         print(f"🕑 Submitting queries to {api_url}")
         try:
-            wiki_metadata = profile_mediawiki_wiki(api_url, full_profile=True, headers=headers, timeout=DEFAULT_TIMEOUT)
+            wiki_metadata = profile_mediawiki_wiki(api_url, full_profile=True, headers=headers, timeout=timeout)
         except (RequestException, MediaWikiAPIError) as e:
             print(e)
             return
@@ -171,8 +178,7 @@ def main():
         base_url = urlunparse(urlparse(wiki_url)._replace(path=""))
         print(f"🕑 Submitting queries to {base_url}")
         try:
-            wiki_metadata = profile_fextralife_wiki(response, full_profile=True, headers=headers,
-                                                    timeout=DEFAULT_TIMEOUT)
+            wiki_metadata = profile_fextralife_wiki(response, full_profile=True, headers=headers, timeout=timeout)
         except RequestException as e:
             print(e)
             return
@@ -188,7 +194,7 @@ def main():
         base_url = urlunparse(urlparse(wiki_url)._replace(path=""))
         print(f"🕑 Submitting queries to {base_url}")
         try:
-            wiki_metadata = profile_dokuwiki_wiki(response, full_profile=True, headers=headers, timeout=DEFAULT_TIMEOUT)
+            wiki_metadata = profile_dokuwiki_wiki(response, full_profile=True, headers=headers, timeout=timeout)
         except RequestException as e:
             print(e)
             return
@@ -200,7 +206,7 @@ def main():
         base_url = urlunparse(urlparse(wiki_url)._replace(path=""))
         print(f"🕑 Submitting queries to {base_url}")
         try:
-            wiki_metadata = profile_wikidot_wiki(response, full_profile=True, headers=headers, timeout=None)
+            wiki_metadata = profile_wikidot_wiki(response, full_profile=True, headers=headers, timeout=timeout)
         except RequestException as e:
             print(e)
             return

@@ -10,7 +10,7 @@ import warnings
 from datetime import datetime, timedelta, timezone
 from io import BytesIO
 from typing import Optional, Generator
-from urllib.parse import urlparse, urlunparse, urljoin
+from urllib.parse import urlparse, urlunparse
 
 from utils import (extract_xpath_property, ensure_absolute_url, normalize_url_protocol, resolve_wiki_page,
                    detect_wikifarm)
@@ -53,7 +53,7 @@ def normalize_wikia_url(original_url: str) -> str:
 
     # Construct the new URL
     new_domain = f"{subdomain}.fandom.com"  # Always use "fandom.com" when restructuring Wikia URLs
-    new_path = urljoin(lang, parsed_url.path)
+    new_path = lang + "/" + parsed_url.path.removeprefix("/")
     parsed_url = parsed_url._replace(netloc=new_domain, path=new_path)
 
     return str(urlunparse(parsed_url))
@@ -99,9 +99,12 @@ def get_mediawiki_api_url(wiki_page: str | requests.Response, session: Optional[
     :param kwargs: kwargs to use for the HTTP requests
     :return: Wiki's API URL
     """
-    # If provided an API URL, just return that URL
+    # If provided an API URL or a response from the API page, just return that URL
     if isinstance(wiki_page, str) and wiki_page.endswith("/api.php"):
         api_url = wiki_page
+        return api_url
+    if isinstance(wiki_page, requests.Response) and wiki_page.url.endswith("/api.php"):
+        api_url = wiki_page.url
         return api_url
 
     # If provided a URL, run an HTTP request
@@ -268,6 +271,44 @@ def query_mediawiki_api_with_continue(api_url: str, params: dict, session: Optio
         last_continue = result['continue']
 
 
+def retrieve_all_mediawiki_content_pages(api_url: str, content_namespaces: Optional[list[int | str]] = None,
+                                         session: Optional[requests.Session] = None, **kwargs) -> pd.DataFrame:
+    """
+    Generates a DataFrame of all content pages (articles) on a specific MediaWiki.
+
+    This can be used to manually count the number of content namespace pages on a MediaWiki wiki when the number
+    returned by the API is inaccurate.
+
+    :param api_url: MediaWiki API URL
+    :param content_namespaces: List of namespace IDs for all content namespaces on the wiki
+    :param session: requests Session to use for HTTP requests
+    :param kwargs: kwargs to use for the HTTP requests
+    :return: DataFrame of all content pages on the wiki
+    """
+    # Create a new session if one was not provided
+    if session is None:
+        session = requests.Session()
+
+    # If the list of content namespaces were not provided, request them
+    if content_namespaces is None:
+        siteinfo_params = {'format': 'json', 'action': 'query', 'meta': 'siteinfo', 'siprop': 'namespaces'}
+        siteinfo = query_mediawiki_api(api_url, params=siteinfo_params, session=session, **kwargs)
+
+        content_namespaces = [entry.get('id') for entry in siteinfo["namespaces"].values()
+                              if entry.get('content') is not None]
+
+    # Request all articles in each of the content namespaces
+    all_articles = []
+    for ns in content_namespaces:
+        query_params = {'action': 'query', 'list': 'allpages', 'apnamespace': ns, 'aplimit': 'max', 'format': 'json'}
+        # Execute query, iterating over each continuation (MediaWiki typically returns up to 500 results per query)
+        for result in query_mediawiki_api_with_continue(api_url, params=query_params, session=session, **kwargs):
+            all_articles += result['allpages']
+
+    articles_df = pd.DataFrame(all_articles)
+    return articles_df
+
+
 def extract_metadata_from_siteinfo(siteinfo: dict) -> dict:
     """
     Extracts the important data from a siteinfo result, and transforms it into a standardized format
@@ -281,8 +322,17 @@ def extract_metadata_from_siteinfo(siteinfo: dict) -> dict:
     full_language = siteinfo["general"]["lang"]  # NOTE: The language retrieved this way may include the dialect
     normalized_language = full_language.split('-')[0]
 
+    # Retrieve paths in a way that is compatible with ancient versions of MediaWiki
+    content_path = siteinfo["general"].get("articlepath")
+    if content_path is not None:
+        content_path = content_path.replace("$1", "")
+    else:
+        encoded_main_page = siteinfo["general"]["mainpage"].replace(" ", "_")
+        main_page_path = urlparse(siteinfo["general"]["base"]).path
+        assert main_page_path.endswith(encoded_main_page)
+        content_path = main_page_path.removesuffix(encoded_main_page)
+
     # For Fandom wikis, ensure the language is part of the base_url instead of the content_path
-    content_path = siteinfo["general"]["articlepath"].replace("$1", "")
     if ".fandom.com" in base_url and normalized_language != "en":
         full_path_parts = (base_url + content_path).split("/")
         if full_path_parts[1] == normalized_language:
@@ -313,7 +363,7 @@ def extract_metadata_from_siteinfo(siteinfo: dict) -> dict:
         "language": normalized_language,
 
         # Technical data
-        "wiki_id": siteinfo["general"]["wikiid"],
+        "wiki_id": siteinfo["general"].get("wikiid"),
         "wikifarm": wikifarm,
         "platform": "MediaWiki".lower(),
         "software_version": extract_mediawiki_version(siteinfo["general"]["generator"]),
@@ -322,7 +372,7 @@ def extract_metadata_from_siteinfo(siteinfo: dict) -> dict:
         "protocol": urlparse(siteinfo["general"]["base"]).scheme,
         "main_page": siteinfo["general"]["mainpage"].replace(" ", "_"),
         "content_path": content_path,
-        "search_path": siteinfo["general"]["script"],
+        "search_path": siteinfo["general"].get("script"),
         "icon_path": favicon_path,
 
         # Licensing
@@ -346,12 +396,9 @@ def retrieve_mediawiki_recentchanges(api_url: str, window_end: datetime, extra_p
     :param kwargs: kwargs to use for the HTTP requests
     :return: DataFrame of Recent Changes
     """
-    # TODO: Handle wikis using a timezone other than UTC (requires an example to test against)
-    if window_end.tzinfo != timezone.utc:
-        raise NotImplementedError("Wikis with a timezone other than UTC are not currently supported")
-
     # Prepare query params
     # NOTE: The MediaWiki API is very particular about date formats. Timezone must be written in Z format.
+    window_end = window_end.astimezone(timezone.utc)  # Force UTC
     rcend = window_end.strftime('%Y-%m-%dT%H:%M:%SZ')
     query_params = {'action': 'query', 'list': 'recentchanges', 'rcshow': '!bot', 'rclimit': 'max', 'rcend': rcend,
                     'rctype': 'edit|new|categorize', 'format': 'json'}
@@ -384,8 +431,13 @@ def profile_mediawiki_recentchanges(api_url: str, rc_days_limit: int, siteinfo: 
     :return: number of edits in the time window, and timestamp of the last edit
     """
     # Calculate window_end
-    #current_timestamp = datetime.fromisoformat(siteinfo["general"]["time"])  # Not supported until Python 3.11
-    current_timestamp = datetime.strptime(siteinfo["general"]["time"], '%Y-%m-%dT%H:%M:%S%z')
+    siteinfo_timestamp = siteinfo["general"].get("time")
+    if siteinfo_timestamp is not None:
+        #current_timestamp = datetime.fromisoformat(siteinfo["general"]["time"])  # Not supported until Python 3.11
+        current_timestamp = datetime.strptime(siteinfo["general"]["time"], '%Y-%m-%dT%H:%M:%S%z')
+        current_timestamp = current_timestamp.astimezone(timezone.utc) # Force UTC
+    else:
+        current_timestamp = datetime.now(timezone.utc)
     window_end = current_timestamp - timedelta(rc_days_limit)
 
     # Determine content namespaces
@@ -452,8 +504,12 @@ def profile_mediawiki_wiki(wiki_page: str | requests.Response, full_profile: boo
     siteinfo_params = {'format': 'json', 'action': 'query', 'meta': 'siteinfo',
                        'siprop': 'general|namespaces|statistics|rightsinfo'}
     siteinfo = query_mediawiki_api(api_url, params=siteinfo_params, session=session, **kwargs)
-
     wiki_metadata = extract_metadata_from_siteinfo(siteinfo)
+
+    # If the search path was not retrieved, manually derive it from the API URL
+    if wiki_metadata.get("search_path") is None:
+        wiki_metadata["search_path"] = urlparse(api_url).path.replace("/api.php", "/index.php")
+
     if not full_profile:
         return wiki_metadata
 

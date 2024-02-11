@@ -10,7 +10,7 @@ import pandas as pd
 import requests
 from enum import Enum
 from io import BytesIO
-from requests.exceptions import SSLError
+from requests.exceptions import SSLError, ConnectionError
 from typing import Optional, Iterable
 from urllib.parse import urlparse, urlunparse, ParseResult as UrlParseResult
 
@@ -102,8 +102,9 @@ def request_with_http_fallback(raw_url: str, session: Optional[requests.Session]
     try:
         response = session.get(url, **kwargs)
 
-    # If using HTTPS results in an SSLError, try HTTP instead
-    except SSLError as e:
+    # If using HTTPS results in an SSLError or ConnectionError, try HTTP instead
+    except (SSLError, ConnectionError) as e:
+        session.close()
         parsed_url = urlparse(url)
         if parsed_url.scheme != "http":
             print(f"⚠ SSLError for {raw_url} . Defaulting to HTTP connection.")
@@ -223,7 +224,7 @@ def retrieve_sitemap(sitemap_url, ignore_errors: bool = False, session: Optional
     try:
         response = session.get(sitemap_url, **kwargs)
     # If the connection failed, close the session and try again (this is mostly relevant for HTTP connections)
-    except requests.exceptions.ConnectionError:
+    except ConnectionError:
         session.close()
         response = session.get(sitemap_url, **kwargs)
 
