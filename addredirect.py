@@ -2,6 +2,8 @@
 Python script for adding a new wiki redirect
 """
 import json
+import warnings
+
 import lxml.html
 import os
 import re
@@ -270,8 +272,19 @@ def read_sites_json(sites_json_filepath: str | os.PathLike) -> list[dict]:
     if not os.path.isfile(sites_json_filepath):
         return []
 
-    with open(sites_json_filepath, "r", encoding='utf-8') as sites_json_file:
-        return json.load(sites_json_file)
+    try:
+        with open(sites_json_filepath, "r", encoding='utf-8') as sites_json_file:
+            return json.load(sites_json_file)
+    # Handle the JSON file including a UTF-8 BOM
+    except json.JSONDecodeError as e:
+        if e.msg == "Unexpected UTF-8 BOM (decode using utf-8-sig)":
+            with open(sites_json_filepath, "r", encoding='utf-8-sig') as sites_json_file:
+                warnings.warn(f"{os.path.basename(sites_json_filepath)} includes a UTF-8 Byte Order Mark (BOM). "
+                              f"Use of a BOM is not recommended in UTF-8.\n"
+                              f"The BOM will be removed if any changes are saved to the JSON file.", UnicodeWarning)
+                return json.load(sites_json_file)
+        else:
+            raise e
 
 
 def add_redirect_entry(new_entry: dict, language_code: str, icon_url: Optional[str] = None,
