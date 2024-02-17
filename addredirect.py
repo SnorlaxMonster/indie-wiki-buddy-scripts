@@ -14,7 +14,8 @@ from requests.exceptions import RequestException
 from typing import Optional, Iterable
 
 from utils import (normalize_url_protocol, request_with_http_fallback, WikiSoftware, read_user_config,
-                   update_user_config, DEFAULT_TIMEOUT)
+                   get_iwb_filepath, confirm_yes_no, DEFAULT_TIMEOUT)
+from addlanguage import add_language
 from profilewiki import profile_wiki, determine_wiki_software
 from mediawiki_tools import (get_mediawiki_api_url, query_mediawiki_api, get_mediawiki_favicon_url,
                              extract_metadata_from_siteinfo, MediaWikiAPIError)
@@ -286,8 +287,12 @@ def add_redirect_entry(new_entry: dict, language_code: str, icon_url: Optional[s
     :param iwb_filepath: Filepath to IWB code, if it differs from the directory the script is being run from.
     :return: ID of the newly added entry, or None if it was not added
     """
-    # Open relevant sites JSON file
+    # If this is a new language, add this language to the list of supported languages
     sites_json_filepath = get_sites_json_filepath(language_code, iwb_filepath=iwb_filepath)
+    if not os.path.isfile(sites_json_filepath):
+        add_language(language_code, iwb_filepath=iwb_filepath)
+
+    # Open relevant sites JSON file
     redirects_list = read_sites_json(sites_json_filepath)
 
     # Check whether origin wiki is already present
@@ -389,51 +394,6 @@ def add_redirect_entry_from_url(origin_wiki_url: str, destination_wiki_url: str,
     # Add the entry
     entry_id = add_redirect_entry(new_entry, language, icon_url=icon_url, iwb_filepath=iwb_filepath, **kwargs)
     return entry_id
-
-
-def confirm_yes_no(caption: str) -> bool:
-    no_values = {"", "n", "no"}
-    yes_values = {"y", "yes"}
-
-    user_input = input(caption).lower().strip()
-    while user_input not in (yes_values | no_values):
-        print("⚠ Unrecognized input. Please enter 'Y' or 'N' (blank counts as 'N').")
-        user_input = input(caption).lower().strip()
-
-    if user_input in yes_values:
-        return True
-    else:
-        return False
-
-
-def get_iwb_filepath() -> str:
-    """
-    CLI for determining the filepath to use to find Indie Wiki Buddy data.
-
-    :return: Filepath to Indie Wiki Buddy data
-    """
-    # If iwb_filepath is defined in the user_config, use that as the path to the IWB folder
-    iwb_filepath = read_user_config("iwb_filepath")
-    if iwb_filepath is not None:
-        print(f"ℹ Using indie-wiki-buddy repo filepath from user config file: {iwb_filepath}")
-        return iwb_filepath
-
-    # If the script is being run from the IWB folder, detect that and use the current folder as the filepath
-    if os.path.isfile("./data/sitesEN.json"):
-        iwb_filepath = "."
-        if iwb_filepath is not None:
-            print(f"ℹ Detected script as being run from the indie-wiki-buddy repo directory")
-            return iwb_filepath
-
-    # Otherwise, request the user specify the filepath
-    print("⚠ Unable to find path to indie-wiki-buddy repo!")
-    iwb_filepath = input(f"📥 Enter path to indie-wiki-buddy repo: ")
-    user_choice = confirm_yes_no("❔ Save filepath for future use (Y/N)?: ")
-    if user_choice:
-        update_user_config("iwb_filepath", iwb_filepath)
-        print(f"💾 Saved path to user config file! It will be used next time you run the script!")
-
-    return iwb_filepath
 
 
 def get_wiki_metadata_cli(site_class: str, key_properties: Iterable, session: Optional[requests.Session] = None,
@@ -580,6 +540,17 @@ def main():
     # Determine sites JSON filepath
     language = origin_site_metadata["language"]
     sites_json_filepath = get_sites_json_filepath(language, iwb_filepath)
+
+    # Check whether this language is already supported
+    if not os.path.isfile(sites_json_filepath):
+        user_choice = confirm_yes_no(f"⚠ {language} is not currently supported. Would you like to add a new language"
+                                     f" (Y/N)?: ")
+        if not user_choice:
+            print("🗙 Redirect addition aborted by user due to new language")
+            return
+        else:
+            print(f"🕑 Updating IWB data to support new language {language}...")
+            add_language(language, iwb_filepath)
 
     # Check whether origin wiki is already present
     redirects_list = read_sites_json(sites_json_filepath)

@@ -133,6 +133,21 @@ def extract_xpath_property(parsed_html: lxml.html.etree, xpath: str, property_na
         return None
 
 
+def confirm_yes_no(caption: str) -> bool:
+    no_values = {"", "n", "no"}
+    yes_values = {"y", "yes"}
+
+    user_input = input(caption).lower().strip()
+    while user_input not in (yes_values | no_values):
+        print("⚠ Unrecognized input. Please enter 'Y' or 'N' (blank counts as 'N').")
+        user_input = input(caption).lower().strip()
+
+    if user_input in yes_values:
+        return True
+    else:
+        return False
+
+
 def detect_wikifarm(url_list: Iterable[str]) -> Optional[str]:
     """
     If the site URL or logo URL contains the name of a wikifarm, assume the wiki is hosted on that wikifarm.
@@ -203,6 +218,36 @@ def update_user_config(key, value):
             user_config = dict()
         user_config[key] = value
         json.dump(user_config, user_config_file, indent=2, ensure_ascii=False)
+
+
+def get_iwb_filepath() -> str:
+    """
+    CLI for determining the filepath to use to find Indie Wiki Buddy data.
+
+    :return: Filepath to Indie Wiki Buddy data
+    """
+    # If iwb_filepath is defined in the user_config, use that as the path to the IWB folder
+    iwb_filepath = read_user_config("iwb_filepath")
+    if iwb_filepath is not None:
+        print(f"ℹ Using indie-wiki-buddy repo filepath from user config file: {iwb_filepath}")
+        return iwb_filepath
+
+    # If the script is being run from the IWB folder, detect that and use the current folder as the filepath
+    if os.path.isfile("./data/sitesEN.json"):
+        iwb_filepath = "."
+        if iwb_filepath is not None:
+            print(f"ℹ Detected script as being run from the indie-wiki-buddy repo directory")
+            return iwb_filepath
+
+    # Otherwise, request the user specify the filepath
+    print("⚠ Unable to find path to indie-wiki-buddy repo!")
+    iwb_filepath = input(f"📥 Enter path to indie-wiki-buddy repo: ")
+    user_choice = confirm_yes_no("❔ Save filepath for future use (Y/N)?: ")
+    if user_choice:
+        update_user_config("iwb_filepath", iwb_filepath)
+        print(f"💾 Saved path to user config file! It will be used next time you run the script!")
+
+    return iwb_filepath
 
 
 def retrieve_sitemap(sitemap_url, ignore_errors: bool = False, session: Optional[requests.Session] = None,
