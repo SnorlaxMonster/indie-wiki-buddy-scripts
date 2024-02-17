@@ -4,6 +4,7 @@ lxml             # XML and HTML parsing
 beautifulsoup4   # HTML parsing (particularly broken HTML in Wikidot's RSS feed)
 pillow           # Managing wiki icon images
 Babel >= 2.12    # Language details for adding new languages (Toki Pona was added in 2.12)
+tabulate         # Generating Markdown tables
 
 # pandas 2.2.0 has a DeprecationWarning if Pyarrow is not installed, which is really annoying when using the CLI.
 # I would prefer not to add Pyarrow as a dependency if it isn't actually required, so just avoiding pandas 2.2.0
