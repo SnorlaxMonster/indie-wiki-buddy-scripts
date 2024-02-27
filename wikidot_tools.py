@@ -188,6 +188,14 @@ def profile_wikidot_wiki(wiki_page: str | requests.Response, full_profile: bool 
     # Determine the search path
     search_path = determine_wikidot_search_path(base_url_with_protocol, session=session, **kwargs)
 
+    # Determine licence
+    if licence_elem is not None:
+        licence_name = licence_elem.text
+        licence_page = licence_elem.get("href")
+    else:
+        licence_name = None
+        licence_page = None
+
     # Extract metadata from the input page
     wiki_metadata = {
         # Basic information
@@ -210,8 +218,8 @@ def profile_wikidot_wiki(wiki_page: str | requests.Response, full_profile: bool 
         "icon_path": ensure_absolute_url(icon_path, base_url_with_protocol),
 
         # Licensing
-        "licence_name": licence_elem.text,
-        "licence_page": licence_elem.get("href"),
+        "licence_name": licence_name,
+        "licence_page": licence_page,
     }
 
     if not full_profile:
