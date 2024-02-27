@@ -8,5 +8,5 @@ tabulate         # Generating Markdown tables
 
 # pandas 2.2.0 has a DeprecationWarning if Pyarrow is not installed, which is really annoying when using the CLI.
 # I would prefer not to add Pyarrow as a dependency if it isn't actually required, so just avoiding pandas 2.2.0
-# Based on pandas GitHub comments, the warning is likely to be removed in 2.2.1, so any other version should do.
+# The warning was removed in 2.2.1, so version other than 2.2.0 will do.
 pandas != 2.2.0  # Processing Recent Changes, sitemaps, etc.

@@ -123,10 +123,10 @@ def get_mediawiki_api_url(wiki_page: str | requests.Response, session: Optional[
     parsed_html = lxml.html.parse(BytesIO(response.content))
 
     # Retrieve the API URL via EditURI element
-    api_url = extract_xpath_property(parsed_html, '/head/link[@rel="EditURI"]', "href")
+    api_url = extract_xpath_property(parsed_html, '//link[@rel="EditURI"]', "href")
     if api_url is not None:
         # Delete the query from the API URL (usually this element's API URL includes '?action=rsd')
-        api_url = urlparse(api_url)._replace(query="").geturl()
+        api_url = str(urlparse(api_url)._replace(query="").geturl())
         return ensure_absolute_url(api_url, response.url)
 
     # If EditURI is missing, try to find the searchform element and determine the API URL from that
@@ -144,7 +144,7 @@ def get_mediawiki_api_url(wiki_page: str | requests.Response, session: Optional[
         if permalink_url.endswith('index.php'):
             print(f"ℹ Retrieved API URL for {response.url} via permalink node")
             api_url = permalink_url.replace('index.php', 'api.php')
-            api_url = urlparse(api_url)._replace(query="").geturl()
+            api_url = str(urlparse(api_url)._replace(query="").geturl())
 
             return ensure_absolute_url(api_url, response.url)
 
@@ -325,7 +325,7 @@ def extract_metadata_from_siteinfo(siteinfo: dict) -> dict:
     :param siteinfo: MediaWiki API response for a "siteinfo" query including siprop=general
     :return: Standardized site properties
     """
-    base_url = urlparse(siteinfo["general"]["base"]).hostname
+    base_url = str(urlparse(siteinfo["general"]["base"]).hostname)
 
     # Retrieve normalized language
     full_language = siteinfo["general"]["lang"]  # NOTE: The language retrieved this way may include the dialect
