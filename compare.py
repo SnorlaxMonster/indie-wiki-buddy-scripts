@@ -1,7 +1,10 @@
 import pandas as pd
 
-from utils import normalize_url_protocol
+from utils import normalize_url_protocol, read_user_config, DEFAULT_TIMEOUT
 from profilewiki import profile_wiki
+
+headers = {'User-Agent': read_user_config("User-Agent")}
+timeout = DEFAULT_TIMEOUT
 
 # Ask how many wikis to compare
 wiki_count_input = "null"
@@ -23,7 +26,7 @@ for wiki_index in range(int(wiki_count_input)):
 all_profiles = []
 for wiki_url in input_wiki_urls:
     print(f"🕑 Profiling {wiki_url}")
-    wiki_profile = profile_wiki(wiki_url)
+    wiki_profile = profile_wiki(wiki_url, headers=headers, timeout=DEFAULT_TIMEOUT)
     all_profiles.append(wiki_profile)
 
 # Create output DataFrame
