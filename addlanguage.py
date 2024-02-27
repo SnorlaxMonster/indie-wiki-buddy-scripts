@@ -47,10 +47,11 @@ def update_languages(iwb_filepath):
 
     # Update Firefox Manifest's resource list
     firefox_manifest_path = os.path.join(iwb_filepath, "manifest-firefox.json")
-    with open(firefox_manifest_path, "w+", encoding="utf-8") as firefox_manifest:
+    with open(firefox_manifest_path, "r", encoding="utf-8") as firefox_manifest:
         firefox_manifest_content = json.load(firefox_manifest)
         firefox_manifest_content["web_accessible_resources"] = new_resource_list
-        json.dump(firefox_manifest_content, firefox_manifest, ensure_ascii=False)
+    with open(firefox_manifest_path, "w", encoding="utf-8") as firefox_manifest:
+        json.dump(firefox_manifest_content, firefox_manifest, indent=2, ensure_ascii=False)
     print("✅ Updated", os.path.basename(firefox_manifest_path))
 
     # Update README
@@ -63,7 +64,7 @@ def update_languages(iwb_filepath):
                            f"%2Fmain%2Fdata%2Fsites{lang_code}.json)")
                           for lang_code in languages_list]
 
-    readme_content = re.sub(r"(?:\n!\[\w+ wikis\]\(.+\))*", '\n' + '\n'.join(language_icon_list), readme_content)
+    readme_content = re.sub(r"(?:\n!\[\w+ wikis\]\(.+\))+", '\n' + '\n'.join(language_icon_list), readme_content)
     with open(readme_path, "w", encoding="utf-8") as readme_file:
         readme_file.write(readme_content)
     print("✅ Updated", os.path.basename(readme_path))
@@ -90,9 +91,18 @@ def update_languages(iwb_filepath):
 
     for lang in languages_list:
         # Get language names
-        locale = babel.Locale(lang.lower())
-        lang_name_local = locale.get_language_name()
-        lang_name_en = locale.get_language_name("en")
+        try:
+            locale = babel.Locale(lang.lower())
+            lang_name_local = locale.get_language_name()
+            lang_name_en = locale.get_language_name("en")
+        except babel.core.UnknownLocaleError:
+            if lang.lower() == "lzh":
+                lang_name_en = "Classical Chinese"
+                lang_name_local = "文言文"
+            else:
+                print(f"⚠ Unknown locale {lang.lower()}. Details will need to be entered manually.")
+                lang_name_en = input("Enter language name in English: ")
+                lang_name_local = input("Enter the name of the language in that language: ")
 
         # Build new tag
         new_tag = soup.new_tag("option", value=lang)
@@ -108,7 +118,7 @@ def update_languages(iwb_filepath):
         raw_settings_html = file.read()
     # Use RegEx replacement to ensure that the rest of the HTML remains unmodified
     settings_regex = re.compile(r'<select(?: name="lang")? id="langSelect"(?: name="lang")?>.*?</select>', flags=re.DOTALL)
-    raw_settings_html = re.sub(settings_regex, str(new_lang_select), raw_settings_html, count=1, flags=re.DOTALL)
+    raw_settings_html = re.sub(settings_regex, str(new_lang_select.prettify()), raw_settings_html, count=1)
     with open(settings_index_path, "w", encoding="utf-8") as file:
         file.write(raw_settings_html)
     print("✅ Updated", settings_index_path)  # Not using basename here, as the project has several files called index.html
