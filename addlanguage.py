@@ -97,9 +97,9 @@ def update_languages(iwb_filepath):
         # Build new tag
         new_tag = soup.new_tag("option", value=lang)
         if lang_name_en == lang_name_local:
-            new_tag.string = f"{lang_name_en} ({lang.upper()})"
+            new_tag.string = f"[{lang.upper()}] {lang_name_en}"
         else:
-            new_tag.string = f"{lang_name_en} / {lang_name_local} ({lang.upper()})"
+            new_tag.string = f"[{lang.upper()}] {lang_name_en} / {lang_name_local}"
         new_lang_select.append(new_tag)
 
     # Update settings file
