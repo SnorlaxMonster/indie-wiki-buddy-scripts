@@ -14,6 +14,7 @@ from mediawiki_tools import get_mediawiki_api_url, profile_mediawiki_wiki, norma
 from fextralife_tools import profile_fextralife_wiki
 from dokuwiki_tools import profile_dokuwiki_wiki
 from wikidot_tools import profile_wikidot_wiki
+from minmax_tools import profile_minmax_wiki
 
 
 def determine_wiki_software_from_url(url: str) -> Optional[WikiSoftware]:
@@ -22,6 +23,8 @@ def determine_wiki_software_from_url(url: str) -> Optional[WikiSoftware]:
         return WikiSoftware.FEXTRALIFE
     if parsed_url.hostname.endswith("wikidot.com"):
         return WikiSoftware.WIKIDOT
+    if parsed_url.hostname.endswith("minmax.wiki"):
+        return WikiSoftware.MINMAX
     return None
 
 
@@ -67,10 +70,15 @@ def determine_wiki_software(parsed_html: lxml.html.etree, response_url: Optional
                           "but this case is not currently officially supported.")
             return WikiSoftware.WIKIDOT
 
-    if meta_url is not None:
-        url_software = determine_wiki_software_from_url(meta_url)
-        if url_software is not None:
-            return url_software
+    # Check the title element
+    title_element = parsed_html.find('//title')
+    if title_element is not None:
+        title_text = title_element.text
+
+        # MinMax-hosted wikis have " | MinMax" at the end of their page title
+        title_text_suffix = title_text.split("|")[-1].strip()
+        if title_text_suffix == "MinMax":
+            return WikiSoftware.MINMAX
 
     # Check the class on the body element (necessary for BreezeWiki)
     body_class = extract_xpath_property(parsed_html, 'body', "class")
@@ -128,6 +136,8 @@ def profile_wiki(wiki_url: str, full_profile: bool = True, session: Optional[Ses
         return profile_dokuwiki_wiki(response, full_profile=full_profile, session=session, **kwargs)
     elif wiki_software == WikiSoftware.WIKIDOT:
         return profile_wikidot_wiki(response, full_profile=full_profile, session=session, **kwargs)
+    elif wiki_software == WikiSoftware.MINMAX:
+        return profile_minmax_wiki(response, full_profile=full_profile, session=session, **kwargs)
     else:
         return None
 
@@ -173,42 +183,37 @@ def main():
             print(e)
             return
 
-    elif wiki_software == WikiSoftware.FEXTRALIFE:
-        print(f"ℹ Detected Fextralife software")
+    elif wiki_software is not None:
+        if wiki_software == WikiSoftware.FEXTRALIFE:
+            print(f"ℹ Detected Fextralife software")
+            profile_function = profile_fextralife_wiki
 
-        # Retrieve wiki metadata
-        base_url = urlunparse(urlparse(wiki_url)._replace(path=""))
-        print(f"🕑 Submitting queries to {base_url}")
-        try:
-            wiki_metadata = profile_fextralife_wiki(response, full_profile=True, headers=headers, timeout=timeout)
-        except RequestException as e:
-            print(e)
+        elif wiki_software == WikiSoftware.DOKUWIKI:
+            print(f"ℹ Detected DokuWiki software")
+            print("⚠ NOTICE: DokuWiki's Recent Changes only include the latest edit to each page, \n"
+                  "restricting the ability to calculate DokuWiki activity metrics comparably to other wikis. \n"
+                  "The active user count will miss users who are not the most recent editor on any page, \n"
+                  "and the recent edit count is instead the number of distinct pages that have been edited recently.")
+
+            profile_function = profile_dokuwiki_wiki
+
+        elif wiki_software == WikiSoftware.WIKIDOT:
+            print(f"ℹ Detected WikiDot software")
+            profile_function = profile_wikidot_wiki
+
+        elif wiki_software == WikiSoftware.MINMAX:
+            print(f"ℹ Detected MinMax software")
+            profile_function = profile_minmax_wiki
+
+        else:
+            print(f"🗙 Unsupported wiki software {wiki_software}")
             return
 
-    elif wiki_software == WikiSoftware.DOKUWIKI:
-        print(f"ℹ Detected DokuWiki software")
-        print("⚠ NOTICE: DokuWiki's Recent Changes only include the latest edit to each page, \n"
-              "restricting the ability to calculate DokuWiki activity metrics comparably to other wikis. \n"
-              "The active user count will miss users who are not the most recent editor on any page, \n"
-              "and the recent edit count is instead the number of distinct pages that have been edited recently.")
-
         # Retrieve wiki metadata
         base_url = urlunparse(urlparse(wiki_url)._replace(path=""))
         print(f"🕑 Submitting queries to {base_url}")
         try:
-            wiki_metadata = profile_dokuwiki_wiki(response, full_profile=True, headers=headers, timeout=timeout)
-        except RequestException as e:
-            print(e)
-            return
-
-    elif wiki_software == WikiSoftware.WIKIDOT:
-        print(f"ℹ Detected Wikidot software")
-
-        # Retrieve wiki metadata
-        base_url = urlunparse(urlparse(wiki_url)._replace(path=""))
-        print(f"🕑 Submitting queries to {base_url}")
-        try:
-            wiki_metadata = profile_wikidot_wiki(response, full_profile=True, headers=headers, timeout=timeout)
+            wiki_metadata = profile_function(response, full_profile=True, headers=headers, timeout=timeout)
         except RequestException as e:
             print(e)
             return

@@ -149,12 +149,12 @@ def retrieve_wikidot_recentchanges(base_url: str, session: Optional[requests.Ses
 
 
 def profile_wikidot_wiki(wiki_page: str | requests.Response, full_profile: bool = True, rc_days_limit: int = 30,
-                            session: Optional[requests.Session] = None, **kwargs) -> dict:
+                         session: Optional[requests.Session] = None, **kwargs) -> dict:
     """
-    Given a URL or HTTP request response for a page of a Fextralife wiki, retrieves key information about the wiki,
+    Given a URL or HTTP request response for a page of a Wikidot wiki, retrieves key information about the wiki,
     including content and activity metrics.
 
-    :param wiki_page: Fextralife wiki page URL or HTTP request response
+    :param wiki_page: Wikidot wiki page URL or HTTP request response
     :param full_profile: Whether to include activity and content metrics
     :param rc_days_limit: The number of days to look back when retrieving Recent Changes
     :param session: requests Session to use for resolving the URL

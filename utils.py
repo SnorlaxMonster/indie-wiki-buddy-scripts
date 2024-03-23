@@ -23,6 +23,7 @@ class WikiSoftware(Enum):
     FEXTRALIFE = 2
     DOKUWIKI = 3
     WIKIDOT = 4
+    MINMAX = 5
 
 
 def extract_base_url(input_url: str):
