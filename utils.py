@@ -305,9 +305,4 @@ def retrieve_sitemap(sitemap_url, ignore_errors: bool = False, session: Optional
             sub_sitemap_df_list.append(sub_sitemap_df)
         sitemap_df = pd.concat([sitemap_df, *sub_sitemap_df_list])
 
-    # Parse "lastmod"
-    if "lastmod" in sitemap_df.columns:
-        # utc=True ensures that all times are converted to UTC (DokuWiki has variable timezones in sitemaps)
-        sitemap_df["lastmod"] = pd.to_datetime(sitemap_df["lastmod"], utc=True)
-
     return sitemap_df

@@ -201,7 +201,7 @@ def profile_fextralife_wiki(wiki_page: str | requests.Response, full_profile: bo
 
     # Request the sitemap
     sitemap_url = base_url.removesuffix("/") + '/sitemap.xml'
-    sitemap = retrieve_sitemap(sitemap_url, session=session, **kwargs)
+    sitemap_df = retrieve_sitemap(sitemap_url, session=session, **kwargs)
 
     # Request Recent Changes
     window_end = datetime.now() - timedelta(rc_days_limit)
@@ -214,7 +214,7 @@ def profile_fextralife_wiki(wiki_page: str | requests.Response, full_profile: bo
     # Extract data
     wiki_metadata.update({
         # Fextralife wiki sitemaps appear to be a definitive listing of exclusively mainspace pages
-        "content_pages": len(sitemap),
+        "content_pages": len(sitemap_df),
         # Active users are registered users who have performed any action in the past 30 days (including bots)
         "active_users": len(recent_rc_df["author"].unique()),
         # Number of content edits made in the past 30 days

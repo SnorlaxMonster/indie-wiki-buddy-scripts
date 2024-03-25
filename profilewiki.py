@@ -62,6 +62,8 @@ def determine_wiki_software(parsed_html: lxml.html.etree, response_url: Optional
     if len(wikirequest_info_script_candidates) != 0:
         wikirequest_info_script = wikirequest_info_script_candidates[0]
         if "var URL_DOMAIN = 'wikidot.com';" in wikirequest_info_script.text:
+            # Even Wikidot wikis hosted at custom domains (such as WikiWealth) have a base wikidot.com domain
+            # and still specify their URL_DOMAIN as wikidot.com
             return WikiSoftware.WIKIDOT
         else:
             warnings.warn("The page has WIKIREQUEST.info like a Wikidot wiki, "
