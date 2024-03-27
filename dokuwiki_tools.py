@@ -311,8 +311,11 @@ def profile_dokuwiki_wiki(wiki_page: str | requests.Response, full_profile: bool
         manifest_response.raise_for_status()
     manifest = manifest_response.json()
 
+    # Get the script path
+    script_path = manifest.get("start_url")
+
     # Request the Main Page
-    entry_url = urljoin(base_url_with_protocol, manifest.get("start_url"))
+    entry_url = urljoin(base_url_with_protocol, script_path)
 
     main_page_response = session.get(entry_url, **kwargs)
     if not main_page_response:
@@ -350,7 +353,7 @@ def profile_dokuwiki_wiki(wiki_page: str | requests.Response, full_profile: bool
         "protocol": urlparse(input_page_response.url).scheme,
         "main_page": main_page_id,
         "content_path": content_path,
-        "search_path": entry_url.removesuffix("/") + "/doku.php",
+        "search_path": script_path.removesuffix("/") + "/doku.php",
         "icon_path": ensure_absolute_url(icon_url, base_url_with_protocol),
 
         # Licensing
