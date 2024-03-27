@@ -4,11 +4,10 @@ Python script for refreshing the properties of existing redirects
 import json
 import os
 import warnings
-from typing import Optional, Iterable
 
 from requests.exceptions import RequestException
 from profilewiki import profile_wiki, MediaWikiAPIError, UnsupportedWikiSoftwareError
-from utils import (read_user_config, get_iwb_filepath, confirm_yes_no,
+from utils import (read_user_config, get_iwb_filepath, confirm_yes_no, download_wiki_icon,
                    DEFAULT_TIMEOUT, DESTINATION_ENTRY_PROPERTIES, ORIGIN_ENTRY_PROPERTIES)
 
 
@@ -29,13 +28,16 @@ def get_wiki_url_from_entry(json_entry: dict, site_class: str) -> str:
     return "https://" + base_url
 
 
-def refresh_site_entry(entry: dict, site_class: str, update_names: bool = True, **kwargs):
+def refresh_site_entry(entry: dict, site_class: str, update_names: bool = True, update_icons: bool = False,
+                       iwb_filepath: str | os.PathLike = ".", **kwargs):
     """
     Updates a site in a redirect entry based on the site's current status.
 
     :param entry: Dict containing a destination or origin entry from a sites JSON file
     :param site_class: Whether the entry is the origin or destination
     :param update_names: Whether to update the names of wikis
+    :param update_icons: Whether to update the icons of wikis
+    :param iwb_filepath: Filepath to IWB code, so that icons can be saved there
     :param kwargs: kwargs to use for the HTTP requests
     """
 
@@ -72,9 +74,18 @@ def refresh_site_entry(entry: dict, site_class: str, update_names: bool = True, 
     for prop in property_list:
         entry[site_class + "_" + prop] = site_metadata.get(prop)
 
-    # Preserve the pre-existing icon filename
+    # Update the icon property
     if "icon" in property_list:
+        # Preserve the pre-existing icon filename
         entry[site_class + "_" + "icon"] = icon_filename
+
+        # If enabled, re-download the favicon
+        icon_url = site_metadata.get("icon_path")
+        if update_icons and icon_url is not None:
+            downloaded_filename = download_wiki_icon(icon_url, icon_filename, site_metadata["language"],
+                                                     iwb_filepath=iwb_filepath, **kwargs)
+            if downloaded_filename is None:
+                print(f"Failed to download icon for [{wiki_name}] using URL {icon_url}")
 
     # Record protocol if it is not HTTPS
     if site_metadata.get("protocol") != "https":
@@ -95,12 +106,15 @@ def refresh_site_entry(entry: dict, site_class: str, update_names: bool = True, 
             entry["tags"] = tags
 
 
-def refresh_sites_json(sites_json_path: str | os.PathLike, update_names: bool = True, **kwargs):
+def refresh_sites_json(sites_json_path: str | os.PathLike, update_names: bool = True, update_icons: bool = False,
+                       iwb_filepath: str | os.PathLike = ".", **kwargs):
     """
     Updates a specified sites JSON file based on the current status of the sites it lists.
 
     :param sites_json_path: Path to the sites JSON file
     :param update_names: Whether to update the names of wikis
+    :param update_icons: Whether to update the icons of wikis
+    :param iwb_filepath: Filepath to IWB code, so that icons can be saved there
     :param kwargs: kwargs to use for the HTTP requests
     """
     # Read file
@@ -110,7 +124,8 @@ def refresh_sites_json(sites_json_path: str | os.PathLike, update_names: bool = 
     # Refresh redirects
     for redirect_entry in sites_json:
         # Refresh destination
-        refresh_site_entry(redirect_entry, "destination", update_names=update_names, **kwargs)
+        refresh_site_entry(redirect_entry, "destination", update_names=update_names,
+                           update_icons=update_icons, iwb_filepath=iwb_filepath, **kwargs)
 
         # Refresh origin
         for origin_entry in redirect_entry["origins"]:
@@ -121,12 +136,14 @@ def refresh_sites_json(sites_json_path: str | os.PathLike, update_names: bool = 
         json.dump(sites_json, sites_json_file, indent=2, ensure_ascii=False)
 
 
-def refresh_all_redirects(iwb_filepath: str | os.PathLike = ".", update_names: bool = True, **kwargs):
+def refresh_all_redirects(iwb_filepath: str | os.PathLike = ".", update_names: bool = True, update_icons: bool = False,
+                          **kwargs):
     """
     Updates a specified sites JSON file based on the current status of the sites it lists.
 
     :param iwb_filepath: Filepath to IWB code, if it differs from the directory the script is being run from.
     :param update_names: Whether to update the names of wikis
+    :param update_icons: Whether to update the icons of wikis
     :param kwargs: kwargs to use for the HTTP requests
     """
     # Construct list of sites data JSON files
@@ -140,7 +157,8 @@ def refresh_all_redirects(iwb_filepath: str | os.PathLike = ".", update_names: b
     # Refresh all sites data JSON files
     for sites_json_filename in sites_data_list:
         sites_json_path = os.path.join(sites_data_path, sites_json_filename)
-        refresh_sites_json(sites_json_path, update_names=update_names, **kwargs)
+        refresh_sites_json(sites_json_path, update_names=update_names, update_icons=update_icons,
+                           iwb_filepath=iwb_filepath, **kwargs)
 
 
 def main():
@@ -156,14 +174,17 @@ def main():
 
     # Check what should be updated
     update_names = confirm_yes_no(f"❔ Update wiki names (Y/N)?: ")
+    update_icons = confirm_yes_no(f"❔ Update icons (Y/N)?: ")
 
     # Refresh all redirects
     if sites_json_filename == "":
-        refresh_all_redirects(iwb_filepath, update_names=update_names, headers=headers, timeout=DEFAULT_TIMEOUT)
+        refresh_all_redirects(iwb_filepath, update_names=update_names, update_icons=update_icons, headers=headers,
+                              timeout=DEFAULT_TIMEOUT)
         print(f"💾 Updated all sites JSON files!")
     else:
         sites_json_path = os.path.join(iwb_filepath, "data", sites_json_filename)
-        refresh_sites_json(sites_json_path, update_names=update_names, headers=headers, timeout=DEFAULT_TIMEOUT)
+        refresh_sites_json(sites_json_path, update_names=update_names, update_icons=update_icons, headers=headers,
+                           timeout=DEFAULT_TIMEOUT, iwb_filepath=iwb_filepath)
         print(f"💾 Updated {sites_json_path}!")
 
 

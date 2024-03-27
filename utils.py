@@ -10,6 +10,7 @@ import pandas as pd
 import requests
 from enum import Enum
 from io import BytesIO
+from PIL import Image
 from requests.exceptions import SSLError, ConnectionError
 from typing import Optional, Iterable
 from urllib.parse import urlparse, urlunparse, ParseResult as UrlParseResult
@@ -138,19 +139,32 @@ def extract_xpath_property(parsed_html: lxml.html.etree, xpath: str, property_na
         return None
 
 
-def confirm_yes_no(caption: str) -> bool:
-    no_values = {"", "n", "no"}
-    yes_values = {"y", "yes"}
+def confirm_yes_no(caption: str, default: bool = False) -> bool:
+    """
+    Takes user input of "(Y)es" or "(N)o" and returns the choice as a boolean.
+    If the user does not submit any text, returns the default value.
 
+    :param caption: Prompt to display when requesting user input
+    :param default: Default value for blank choice
+    :return: User's choice as a boolean
+    """
+    no_values = {"n", "no"}
+    yes_values = {"y", "yes"}
+    default_values = {""}
+
+    # Take user input
     user_input = input(caption).lower().strip()
-    while user_input not in (yes_values | no_values):
-        print("⚠ Unrecognized input. Please enter 'Y' or 'N' (blank counts as 'N').")
+    while user_input not in (yes_values | no_values | default_values):
+        print(f"⚠ Unrecognized input. Please enter 'Y' or 'N' (blank counts as '{'Y' if default else 'N'}').")
         user_input = input(caption).lower().strip()
 
+    # Return True or False
     if user_input in yes_values:
         return True
-    else:
+    elif user_input in no_values:
         return False
+    else:
+        return default
 
 
 def detect_wikifarm(url_list: Iterable[str]) -> Optional[str]:
@@ -203,6 +217,49 @@ def resolve_wiki_page(wiki_page: str | requests.Response, session: Optional[requ
         response.raise_for_status()
 
     return response
+
+
+def download_wiki_icon(icon_url: str, icon_filename: str, language_code: str,
+                       session: Optional[requests.Session] = None, iwb_filepath: str | os.PathLike = ".",
+                       **kwargs) -> Optional[str]:
+    """
+    Downloads the wiki icon from the specified URL and adds it to the appropriate JSON file.
+
+    :param icon_url: URL for the wiki's icon
+    :param icon_filename: Filename to use for the downloaded icon
+    :param language_code: Language of the new entry (as 2-letter language code)
+    :param session: requests Session to use for resolving the URL
+    :param kwargs: kwargs to use for the HTTP requests
+    :param iwb_filepath: Filepath to IWB code, if it differs from the directory the script is being run from.
+    :return: Filename the downloaded icon was saved to
+    """
+    # Create a new session if one was not provided
+    if session is None:
+        session = requests.Session()
+
+    # Download icon file
+    try:
+        icon_url = normalize_url_protocol(icon_url)
+        icon_file_response = session.get(icon_url, **kwargs)
+    except ConnectionError:
+        icon_file_response = None
+
+    if not icon_file_response:
+        return None
+
+    # Determine filepath
+    icon_folderpath = os.path.join(iwb_filepath, "favicons", language_code)
+    if not os.path.isdir(icon_folderpath):  # If the folder doesn't already exist, create it
+        os.mkdir(icon_folderpath)
+        print(f"✏ Created new {language_code} icon folder")
+    icon_filepath = os.path.join(icon_folderpath, icon_filename)
+
+    # Write to file
+    image_file = Image.open(BytesIO(icon_file_response.content))
+    image_file = image_file.resize((16, 16))
+    image_file.save(icon_filepath, optimize=True)  # PIL ensures that conversion from ICO to PNG is safe
+
+    return icon_filename
 
 
 def read_user_config(key, default=None):

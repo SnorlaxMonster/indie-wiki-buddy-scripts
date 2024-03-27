@@ -10,13 +10,12 @@ import re
 import requests
 import unicodedata
 from io import BytesIO
-from PIL import Image
 from urllib.parse import urlparse
 from requests.exceptions import RequestException
 from typing import Optional, Iterable
 
 from utils import (normalize_url_protocol, request_with_http_fallback, WikiSoftware, read_user_config,
-                   get_iwb_filepath, confirm_yes_no,
+                   download_wiki_icon, get_iwb_filepath, confirm_yes_no,
                    DEFAULT_TIMEOUT, ORIGIN_ENTRY_PROPERTIES, DESTINATION_ENTRY_PROPERTIES)
 from addlanguage import add_language
 from profilewiki import profile_wiki, determine_wiki_software
@@ -157,49 +156,6 @@ def generate_icon_filename(wiki_name: str) -> str:
     return filename_stem + ".png"
 
 
-def download_wiki_icon(icon_url: str, wiki_name: str, language_code: str, session: Optional[requests.Session] = None,
-                       iwb_filepath: str | os.PathLike = ".", **kwargs) -> Optional[str]:
-    """
-    Downloads the wiki icon from the specified URL and adds it to the appropriate JSON file.
-
-    :param icon_url: URL for the wiki's icon
-    :param wiki_name: Name of the wiki the icon is for
-    :param language_code: Language of the new entry (as 2-letter language code)
-    :param session: requests Session to use for resolving the URL
-    :param kwargs: kwargs to use for the HTTP requests
-    :param iwb_filepath: Filepath to IWB code, if it differs from the directory the script is being run from.
-    :return: Filename the downloaded icon was saved to
-    """
-    # Create a new session if one was not provided
-    if session is None:
-        session = requests.Session()
-
-    # Download icon file
-    try:
-        icon_url = normalize_url_protocol(icon_url)
-        icon_file_response = session.get(icon_url, **kwargs)
-    except ConnectionError:
-        icon_file_response = None
-
-    if not icon_file_response:
-        return None
-
-    # Determine filepath
-    icon_filename = generate_icon_filename(wiki_name)
-    icon_folderpath = os.path.join(iwb_filepath, "favicons", language_code)
-    if not os.path.isdir(icon_folderpath):  # If the folder doesn't already exist, create it
-        os.mkdir(icon_folderpath)
-        print(f"✏ Created new {language_code} icon folder")
-    icon_filepath = os.path.join(icon_folderpath, icon_filename)
-
-    # Write to file
-    image_file = Image.open(BytesIO(icon_file_response.content))
-    image_file = image_file.resize((16, 16))
-    image_file.save(icon_filepath, optimize=True)  # PIL ensures that conversion from ICO to PNG is safe
-
-    return icon_filename
-
-
 def validate_origin_uniqueness(sites_json: list[dict], new_origin_base_url: str) -> Optional[dict]:
     """
     Identify any existing redirect from the proposed new origin URL.
@@ -336,8 +292,9 @@ def add_redirect_entry(new_entry: dict, language_code: str, icon_url: Optional[s
         if icon_url is None:
             print(f"⚠ No icon URL provided for {destination_wiki_name}")
         else:
-            icon_filename = download_wiki_icon(icon_url, destination_wiki_name, language_code,
-                                               iwb_filepath=iwb_filepath, **kwargs)
+            icon_filename = generate_icon_filename(destination_wiki_name)
+            icon_filename = download_wiki_icon(icon_url, icon_filename, language_code, iwb_filepath=iwb_filepath,
+                                               **kwargs)
             if icon_filename is not None:
                 inserted_entry["destination_icon"] = icon_filename
             else:
@@ -634,7 +591,8 @@ def main():
 
         destination_wiki_name = destination_site_metadata["name"]
         print("🕑 Grabbing destination wiki's favicon...")
-        icon_filename = download_wiki_icon(icon_url, destination_wiki_name, language, iwb_filepath=iwb_filepath,
+        icon_filename = generate_icon_filename(destination_wiki_name)
+        icon_filename = download_wiki_icon(icon_url, icon_filename, language, iwb_filepath=iwb_filepath,
                                            session=destination_session, headers=headers, timeout=DEFAULT_TIMEOUT)
         if icon_filename is not None:
             print(f"🖼 Favicon saved as {icon_filename}!")
