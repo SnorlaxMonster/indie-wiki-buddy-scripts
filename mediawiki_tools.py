@@ -331,22 +331,25 @@ def extract_metadata_from_siteinfo(siteinfo: dict) -> dict:
     full_language = siteinfo["general"]["lang"]  # NOTE: The language retrieved this way may include the dialect
     normalized_language = full_language.split('-')[0]
 
-    # Retrieve paths in a way that is compatible with ancient versions of MediaWiki
+    # Retrieve path properties
+    search_path = siteinfo["general"].get("script")
     content_path = siteinfo["general"].get("articlepath")
     if content_path is not None:
         content_path = content_path.replace("$1", "")
+    # In ancient versions of MediaWiki, the content_path is not returned by the API
     else:
         encoded_main_page = siteinfo["general"]["mainpage"].replace(" ", "_")
         main_page_path = urlparse(siteinfo["general"]["base"]).path
         assert main_page_path.endswith(encoded_main_page)
         content_path = main_page_path.removesuffix(encoded_main_page)
 
-    # For Fandom wikis, ensure the language is part of the base_url instead of the content_path
-    if ".fandom.com" in base_url and normalized_language != "en":
-        full_path_parts = (base_url + content_path).split("/")
-        if full_path_parts[1] == normalized_language:
-            base_url = "/".join(full_path_parts[0:2])
-            content_path = "/" + "/".join(full_path_parts[2:])
+    # For non-English Fandom and wiki.gg wikis, place the language path in the base_url instead of path properties
+    script_path = siteinfo["general"].get("scriptpath")
+    if (".fandom.com" in base_url or ".wiki.gg" in base_url) and script_path != "":
+        assert script_path.removeprefix("/") == normalized_language
+        base_url += script_path
+        content_path = content_path.removeprefix(script_path)
+        search_path = search_path.removeprefix(script_path)
 
     # Apply standard wiki name changes
     wiki_name = siteinfo["general"]["sitename"]
@@ -384,7 +387,7 @@ def extract_metadata_from_siteinfo(siteinfo: dict) -> dict:
         "protocol": urlparse(siteinfo["general"]["base"]).scheme,
         "main_page": siteinfo["general"]["mainpage"].replace(" ", "_"),
         "content_path": content_path,
-        "search_path": siteinfo["general"].get("script"),
+        "search_path": search_path,
         "icon_path": favicon_path,
 
         # Licensing
