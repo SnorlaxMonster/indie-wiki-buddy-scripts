@@ -346,7 +346,6 @@ def extract_metadata_from_siteinfo(siteinfo: dict) -> dict:
     # For non-English Fandom and wiki.gg wikis, place the language path in the base_url instead of path properties
     script_path = siteinfo["general"].get("scriptpath")
     if (".fandom.com" in base_url or ".wiki.gg" in base_url) and script_path != "":
-        assert script_path.removeprefix("/") == normalized_language
         base_url += script_path
         content_path = content_path.removeprefix(script_path)
         search_path = search_path.removeprefix(script_path)
