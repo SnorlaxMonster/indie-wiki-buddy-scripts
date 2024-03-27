@@ -16,7 +16,8 @@ from requests.exceptions import RequestException
 from typing import Optional, Iterable
 
 from utils import (normalize_url_protocol, request_with_http_fallback, WikiSoftware, read_user_config,
-                   get_iwb_filepath, confirm_yes_no, DEFAULT_TIMEOUT)
+                   get_iwb_filepath, confirm_yes_no,
+                   DEFAULT_TIMEOUT, ORIGIN_ENTRY_PROPERTIES, DESTINATION_ENTRY_PROPERTIES)
 from addlanguage import add_language
 from profilewiki import profile_wiki, determine_wiki_software
 from mediawiki_tools import (get_mediawiki_api_url, query_mediawiki_api, get_mediawiki_favicon_url,
@@ -90,10 +91,10 @@ def validate_wiki_languages(origin_site_metadata: dict, destination_site_metadat
 def generate_origin_entry(origin_site_metadata: dict) -> dict:
     origin_entry = {
         "origin": origin_site_metadata["name"],
-        "origin_base_url": origin_site_metadata["base_url"],
-        "origin_content_path": origin_site_metadata["content_path"],
-        "origin_main_page": origin_site_metadata["main_page"],
     }
+    for prop in ORIGIN_ENTRY_PROPERTIES:
+        origin_entry["origin" + "_" + prop] = origin_site_metadata.get(prop)
+
     return origin_entry
 
 
@@ -123,12 +124,9 @@ def generate_redirect_entry(origin_site_metadata: dict, destination_site_metadat
         "origins_label": origin_entry["origin"],
         "origins": [origin_entry],
         "destination": destination_site_metadata["name"],
-        "destination_base_url": destination_site_metadata["base_url"],
-        "destination_platform": destination_site_metadata["platform"],
-        "destination_icon": None,  # Filename cannot be determined at this time. Populate it when the icon is added.
-        "destination_main_page": destination_site_metadata["main_page"],
-        "destination_search_path": destination_site_metadata["search_path"],
     }
+    for prop in DESTINATION_ENTRY_PROPERTIES:
+        entry["destination" + "_" + prop] = destination_site_metadata.get(prop)
 
     # Generate tags
     wikifarm = destination_site_metadata.get("wikifarm")

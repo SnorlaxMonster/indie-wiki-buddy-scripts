@@ -17,6 +17,10 @@ from urllib.parse import urlparse, urlunparse, ParseResult as UrlParseResult
 USER_CONFIG_PATH = "user_config.json"
 DEFAULT_TIMEOUT = 30  # seconds
 
+# Essential properties for a redirect entry, excluding "name" which is handled separately
+ORIGIN_ENTRY_PROPERTIES = ["base_url", "content_path", "main_page"]
+DESTINATION_ENTRY_PROPERTIES = ["base_url", "platform", "icon", "content_path", "search_path", "main_page"]
+
 
 class WikiSoftware(Enum):
     MEDIAWIKI = 1
