@@ -17,6 +17,10 @@ from wikidot_tools import profile_wikidot_wiki
 from minmax_tools import profile_minmax_wiki
 
 
+class UnsupportedWikiSoftwareError(NotImplementedError):
+    pass
+
+
 def determine_wiki_software_from_url(url: str) -> Optional[WikiSoftware]:
     parsed_url = urlparse(url)
     if parsed_url.hostname.endswith("fextralife.com"):
@@ -104,7 +108,7 @@ def determine_wiki_software(parsed_html: lxml.html.etree, response_url: Optional
 
 
 def profile_wiki(wiki_url: str, full_profile: bool = True, session: Optional[Session] = None,
-                 **kwargs) -> Optional[dict]:
+                 headers: Optional[dict] = None, **kwargs) -> dict:
     """
     Given a URL of any type of wiki, retrieves key information about the wiki,
     including content and activity metrics.
@@ -112,6 +116,7 @@ def profile_wiki(wiki_url: str, full_profile: bool = True, session: Optional[Ses
     :param wiki_url: Wiki URL
     :param full_profile: Whether to include activity and content metrics
     :param session: requests Session to use for resolving the URL
+    :param headers: Headers to use for the HTTP requests
     :param kwargs: kwargs to use for the HTTP requests
     :return: JSON-serializable dict of wiki metadata in standardized format
     """
@@ -121,7 +126,13 @@ def profile_wiki(wiki_url: str, full_profile: bool = True, session: Optional[Ses
 
     # GET request input URL
     wiki_url = normalize_url_protocol(wiki_url)
-    response = request_with_http_fallback(wiki_url, session=session, **kwargs)
+    response = request_with_http_fallback(wiki_url, session=session, headers=headers, **kwargs)
+
+    # A 403 error is usually due to the User-Agent. Try again with the default User-Agent instead.
+    if response.status_code == 403 and headers is not None:
+        headers = None  # Ensure the same headers are used for future requests too
+        response = request_with_http_fallback(wiki_url, session=session, headers=headers, **kwargs)
+
     if not response:
         response.raise_for_status()
 
@@ -131,17 +142,17 @@ def profile_wiki(wiki_url: str, full_profile: bool = True, session: Optional[Ses
 
     # Select profiler based on software
     if wiki_software == WikiSoftware.MEDIAWIKI:
-        return profile_mediawiki_wiki(response, full_profile=full_profile, session=session, **kwargs)
+        return profile_mediawiki_wiki(response, full_profile=full_profile, session=session, headers=headers, **kwargs)
     elif wiki_software == WikiSoftware.FEXTRALIFE:
-        return profile_fextralife_wiki(response, full_profile=full_profile, session=session, **kwargs)
+        return profile_fextralife_wiki(response, full_profile=full_profile, session=session, headers=headers, **kwargs)
     elif wiki_software == WikiSoftware.DOKUWIKI:
-        return profile_dokuwiki_wiki(response, full_profile=full_profile, session=session, **kwargs)
+        return profile_dokuwiki_wiki(response, full_profile=full_profile, session=session, headers=headers, **kwargs)
     elif wiki_software == WikiSoftware.WIKIDOT:
-        return profile_wikidot_wiki(response, full_profile=full_profile, session=session, **kwargs)
+        return profile_wikidot_wiki(response, full_profile=full_profile, session=session, headers=headers, **kwargs)
     elif wiki_software == WikiSoftware.MINMAX:
-        return profile_minmax_wiki(response, full_profile=full_profile, session=session, **kwargs)
+        return profile_minmax_wiki(response, full_profile=full_profile, session=session, headers=headers, **kwargs)
     else:
-        return None
+        raise UnsupportedWikiSoftwareError(f"Unsupported wiki software at {response.url}")
 
 
 def main():
