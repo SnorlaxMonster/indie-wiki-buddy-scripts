@@ -176,12 +176,18 @@ def detect_wikifarm(url_list: Iterable[str]) -> Optional[str]:
     :return: Name of the site's wikifarm, if it is hosted by one
     """
     # This is only relevant for destinations, so "fandom" is not checked for (and it would likely give false positives)
-    known_wikifarms = {"shoutwiki", "wiki.gg", "miraheze", "wikitide"}
+    known_wikifarms = [
+        { "name": "ShoutWiki", "url": "shoutwiki.com" },
+        { "name": "wiki.gg", "url": "wiki.gg" },
+        { "name": "Miraheze", "url": "miraheze.org" },
+        { "name": "WikiTide", "url": "wikitide.org" },
+        { "name": "Paradox", "url": "paradoxwikis.com" }
+    ]
 
     for wikifarm in known_wikifarms:
         for url in url_list:
-            if wikifarm in url:
-                return wikifarm
+            if wikifarm["url"] in url:
+                return wikifarm["name"]
     return None
 
 

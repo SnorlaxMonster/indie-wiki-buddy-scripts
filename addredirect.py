@@ -130,7 +130,7 @@ def generate_redirect_entry(origin_site_metadata: dict, destination_site_metadat
     # Generate tags
     wikifarm = destination_site_metadata.get("wikifarm")
     if wikifarm is not None:
-        entry["tags"] = [wikifarm]
+        entry["destination_host"] = wikifarm
 
     return entry
 
