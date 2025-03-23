@@ -241,10 +241,11 @@ def download_wiki_icon(icon_url: str, icon_filename: str, language_code: str,
     try:
         icon_url = normalize_url_protocol(icon_url)
         icon_file_response = session.get(icon_url, **kwargs)
+        if not icon_file_response.ok:
+            print(f"⚠ Failed to download icon from {icon_url} (HTTP {icon_file_response.status_code})")
+            return None
     except ConnectionError:
-        icon_file_response = None
-
-    if not icon_file_response:
+        print(f"⚠ Connection error while downloading icon from {icon_url}")
         return None
 
     # Determine filepath
@@ -255,9 +256,13 @@ def download_wiki_icon(icon_url: str, icon_filename: str, language_code: str,
     icon_filepath = os.path.join(icon_folderpath, icon_filename)
 
     # Write to file
-    image_file = Image.open(BytesIO(icon_file_response.content))
-    image_file = image_file.resize((16, 16))
-    image_file.save(icon_filepath, optimize=True)  # PIL ensures that conversion from ICO to PNG is safe
+    try:
+        image_file = Image.open(BytesIO(icon_file_response.content))
+        image_file = image_file.resize((16, 16))
+        image_file.save(icon_filepath, optimize=True)  # PIL ensures that conversion from ICO to PNG is safe
+    except Exception as e:
+        print(f"⚠ Failed to process icon from {icon_url}: {str(e)}")
+        return None
 
     return icon_filename
 
